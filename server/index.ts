@@ -18,14 +18,19 @@ const PORT = Number(process.env.AGENTVILLE_PORT ?? 4917);
 const HOST = '127.0.0.1'; // local only
 const DIST = path.join(APP, 'dist');
 const PUBLIC = path.join(APP, 'public');
-const TOWN = process.env.AGENTVILLE_TOWN ?? 'frostpeak';
 const DEBUG = !!process.env.AGENTVILLE_DEBUG;
 const log = new EventLog(path.join(APP, 'logs'));
 const alerts = new Alerts(process.env.AGENTVILLE_ALERTS !== '0');
 
-const town = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', TOWN, 'town.json'), 'utf8'));
 const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', 'robot.json'), 'utf8'));
-const buildings = Object.entries<any>(town.buildings).map(([id, b]) => ({ id, name: b.name, role: b.role }));
+// every town map in public/towns (Frostpeak first: repos get maps in this order of preference)
+const MAP_ORDER = ['frostpeak', 'maplewood', 'azure-harbor'];
+const mapIds = fs.readdirSync(path.join(PUBLIC, 'towns')).filter((d) => fs.existsSync(path.join(PUBLIC, 'towns', d, 'town.json')))
+  .sort((a, b) => (MAP_ORDER.indexOf(a) + 1 || 99) - (MAP_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
+const maps = Object.fromEntries(mapIds.map((id) => {
+  const t = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', id, 'town.json'), 'utf8'));
+  return [id, Object.entries<any>(t.buildings).map(([b, d]) => ({ id: b, name: d.name, role: d.role }))];
+}));
 
 const clients = new Set<WebSocket>();
 const notifiers = new Set<WebSocket>(); // pages allowed to show browser notifications
@@ -35,7 +40,7 @@ const broadcast = (msg: object) => {
   for (const c of clients) if (c.readyState === WebSocket.OPEN) c.send(s);
 };
 let labelsKey = '';
-const sessions = new Sessions(buildings, Object.keys(robot.colors), (msg) => {
+const sessions = new Sessions(maps, Object.keys(robot.colors), (msg) => {
   if (msg.type === 'needs') {
     const via = alerts.needs(msg.state, msg.project, notifiers.size > 0);
     if (via === 'page') {
@@ -140,6 +145,6 @@ server.listen(PORT, HOST, () => {
   if (process.platform === 'darwin') console.log(`Needs-you alerts ${alerts.on ? 'on' : 'off'} (switch with the Alerts button; start with AGENTVILLE_ALERTS=0 to begin off)`);
   console.log('Waiting for Claude Code events… (install the hooks once with: npm run hooks:install)');
   if (log.enabled) console.log(`Logging events to ${log.dir} (turn off with AGENTVILLE_LOG=0)`);
-  log.write({ event: 'ServiceStart', version: 1, port: PORT, town: TOWN });
+  log.write({ event: 'ServiceStart', version: 2, port: PORT, maps: mapIds });
   if (process.argv.includes('--open')) exec(`${process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'} ${url}`);
 });

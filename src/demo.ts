@@ -1,4 +1,4 @@
-import type { AgentState, TownData } from './types';
+import type { AgentState, TownData, TownInfo } from './types';
 import { plazaOf, stationOf } from './town';
 
 /**
@@ -6,28 +6,43 @@ import { plazaOf, stationOf } from './town';
  * It produces the same AgentState updates the service will send in milestone 4.
  */
 const NAMES = ['Atlas', 'Byte', 'Cleo', 'Dex', 'Echo', 'Fern', 'Gus', 'Iris'];
+/** What a demo robot does, by the folder of the building it's at. */
 const TASKS: Record<string, string[]> = {
-  'grand-lodge': ['Updating dependencies', 'Editing the README', 'Changing project config'],
-  church: ['Fixing the login flow', 'Rotating auth tokens', 'Reading the session code'],
-  observatory: ['Building the usage report', 'Reading analytics events'],
-  'weather-station': ['Running tests', 'Checking the page in the browser', 'Running the build'],
-  'train-station': ['Checking the deploy script'],
-  'timber-workshop': ['Refactoring helpers', 'Writing a script'],
-  greenhouse: ['Prototyping an idea', 'Trying a new layout'],
-  'gear-shop': ['Running the build', 'Fixing CI'],
-  'rescue-station': ['Tracing a crash', 'Fixing a bug'],
-  'skating-pavilion': ['Wiring a webhook', 'Retrying events'],
-  library: ['Writing docs', 'Reading the API docs'],
-  cafe: ['Polishing the UI', 'Editing the login form', 'Styling the dashboard'],
-  'ski-lift': ['Syncing data', 'Changing the database'],
-  'hot-springs': ['Warming the cache', 'Running tests'],
+  'root files': ['Updating dependencies', 'Editing the README', 'Changing project config'],
+  'commands & tools': ['Running tests', 'Checking the page in the browser', 'Running the build'],
+  auth: ['Fixing the login flow', 'Rotating auth tokens', 'Reading the session code'],
+  ui: ['Polishing the UI', 'Editing the login form', 'Styling the dashboard'],
+  db: ['Syncing data', 'Changing the database'],
+  docs: ['Writing docs', 'Reading the API docs'],
+  analytics: ['Building the usage report', 'Reading analytics events'],
+  ci: ['Running the build', 'Fixing CI'],
+  cache: ['Warming the cache', 'Running tests'],
+  webhooks: ['Wiring a webhook', 'Retrying events'],
+  prototypes: ['Prototyping an idea', 'Trying a new layout'],
+  'crash-reports': ['Tracing a crash', 'Fixing a bug'],
 };
-/** Pretend repo folders per building, so demo labels look like live ones (folder names, not town names). */
-export const DEMO_FOLDERS: Record<string, string[]> = {
-  'grand-lodge': ['root files'], church: ['auth'], observatory: ['analytics'], 'weather-station': ['commands & tools'],
-  greenhouse: ['prototypes'], 'gear-shop': ['ci'], 'rescue-station': ['crash-reports'], 'skating-pavilion': ['webhooks'],
-  library: ['docs'], cafe: ['ui'], 'ski-lift': ['db'], 'hot-springs': ['cache'],
-};
+const FOLDERS = ['auth', 'ui', 'db', 'docs', 'analytics', 'ci', 'cache', 'webhooks', 'prototypes', 'crash-reports'];
+
+/** Pretend repo folders for a town map's buildings, so demo labels look like live ones. */
+export function demoFolders(t: TownData): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  let i = 0;
+  for (const [id, b] of Object.entries(t.buildings)) {
+    if (b.role === 'root') out[id] = ['root files'];
+    else if (b.role === 'commands') out[id] = ['commands & tools'];
+    else if (!b.role && i < FOLDERS.length) out[id] = [FOLDERS[i++]];
+  }
+  return out;
+}
+
+/** Pretend towns in two worlds, so the demo has a world map. Folders are filled in from each town's map. */
+export const DEMO_TOWNS: TownInfo[] = [
+  { id: 'demo:acme/api', name: 'api', world: 'Acme', map: 'frostpeak', spot: true, folders: {}, names: {} },
+  { id: 'demo:acme/web', name: 'web', world: 'Acme', map: 'maplewood', spot: true, folders: {}, names: {} },
+  { id: 'demo:acme/docs-site', name: 'docs-site', world: 'Acme', map: 'azure-harbor', spot: true, folders: {}, names: {} },
+  { id: 'demo:acme/admin', name: 'admin', world: 'Acme', map: 'frostpeak', spot: false, folders: {}, names: {} },
+  { id: 'demo:blog/site', name: 'site', world: 'Blog', map: 'frostpeak', spot: true, folders: {}, names: {} },
+];
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
 export class Demo {
@@ -37,7 +52,8 @@ export class Demo {
   private colors: string[];
   private stopped = false;
 
-  constructor(private town: TownData, colors: string[], private emit: (s: AgentState) => void, private drop: (id: string) => void, private log: (html: string) => void, private arrived: (id: string) => boolean = () => true) {
+  /** `mapOf`: the town map of a demo town id. */
+  constructor(private mapOf: (town: string) => TownData, colors: string[], private emit: (s: AgentState) => void, private drop: (id: string) => void, private log: (html: string) => void, private arrived: (id: string) => boolean = () => true) {
     this.colors = colors;
   }
 
@@ -55,8 +71,14 @@ export class Demo {
     this.emit({ ...a });
   }
 
-  private buildings() {
-    return Object.keys(this.town.buildings).filter((k) => !this.town.buildings[k].role || this.town.buildings[k].role === 'root' || this.town.buildings[k].role === 'commands');
+  /** Buildings a robot can work at in a town: those with a demo folder. */
+  private buildings(town: string) {
+    return Object.keys(DEMO_TOWNS.find((t) => t.id === town)?.folders ?? {});
+  }
+
+  private task(town: string, building: string) {
+    const folder = DEMO_TOWNS.find((t) => t.id === town)?.folders[building]?.[0] ?? '';
+    return pick(TASKS[folder] ?? ['Editing code']);
   }
 
   spawn(parentId?: string) {
@@ -64,9 +86,10 @@ export class Demo {
     const parent = parentId ? this.agents.get(parentId) : undefined;
     const used = new Set([...this.agents.values()].filter((a) => !a.parentId).map((a) => a.color));
     const color = parent?.color ?? this.colors.find((c) => !used.has(c)) ?? pick(this.colors);
-    const building = pick(this.buildings());
     const name = parent ? `${parent.name}·2` : NAMES[(this.n - 1) % NAMES.length];
-    const s: AgentState = { id, name, color, building, status: 'working', task: pick(TASKS[building] ?? ['Editing code']), parentId, project: 'demo-repo', startedAt: Date.now() };
+    const town = parent ? DEMO_TOWNS.find((t) => t.id === parent.town)! : pick(DEMO_TOWNS);
+    const building = pick(this.buildings(town.id));
+    const s: AgentState = { id, name, color, building, status: 'working', task: this.task(town.id, building), parentId, project: town.name, town: town.id, startedAt: Date.now() };
     this.agents.set(id, s);
     this.send(s);
     this.timers.set(id, performance.now() + 7000 + Math.random() * 6000);
@@ -93,7 +116,7 @@ export class Demo {
       if ((this.timers.get(id) ?? 0) > now) continue;
       const r = Math.random();
       if (a.parentId && r < 0.3) { this.agents.delete(id); this.drop(id); this.log(`<b>${a.name}</b> finished`); continue; }
-      const plaza = plazaOf(this.town);
+      const plaza = plazaOf(this.mapOf(a.town!));
       if (plaza && a.status !== 'idle' && !a.parentId && r > 0.82) {
         a.building = plaza; a.status = 'idle'; a.task = undefined;
         this.log(`<b>${a.name}</b> finished and went to the plaza`);
@@ -106,10 +129,18 @@ export class Demo {
         this.spawn(id);
         this.timers.set(id, now + 6000);
         continue;
+      } else if (r < 0.26 && !a.parentId) {
+        // work in another repo of the same world: off to that town
+        const from = DEMO_TOWNS.find((t) => t.id === a.town)!;
+        const to = pick(DEMO_TOWNS.filter((t) => t.world === from.world && t.id !== from.id).concat(from));
+        a.town = to.id; a.project = to.name;
+        a.building = pick(this.buildings(to.id)); a.status = 'working'; a.task = this.task(to.id, a.building);
+        if (to !== from) this.log(`<b>${a.name}</b> went from ${from.name} to ${to.name}`);
+        this.timers.set(id, now + 9000 + Math.random() * 9000);
       } else {
-        a.building = pick(this.buildings().filter((b) => b !== a.building));
+        a.building = pick(this.buildings(a.town!).filter((b) => b !== a.building));
         a.status = 'working';
-        a.task = pick(TASKS[a.building] ?? ['Editing code']);
+        a.task = this.task(a.town!, a.building);
         this.timers.set(id, now + 9000 + Math.random() * 9000);
       }
       this.send(a);

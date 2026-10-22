@@ -2,9 +2,10 @@ import './style.css';
 import { loadTown } from './town';
 import { RobotSprites } from './sprites';
 import { World } from './world';
-import { Demo, DEMO_FOLDERS } from './demo';
+import { Demo, DEMO_TOWNS, demoFolders } from './demo';
+import { WorldMap, loadWorldArt } from './worldview';
 import { connectLive, serviceAvailable } from './live';
-import type { AgentState, TownInfo } from './types';
+import type { AgentState, TownData, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 
@@ -31,19 +32,37 @@ async function main() {
   const agents = new Map<string, AgentState>();
   let towns: TownInfo[] = [];
   let current: string | null = null;
+  /** the town the scene shows robots for (set once its map has loaded) */
+  let shown: string | null = null;
+  // town maps (Frostpeak, Maplewood…), loaded once each; a missing one falls back to Frostpeak
+  const mapCache = new Map<string, Promise<TownData>>([['frostpeak', Promise.resolve(town)]]);
+  const mapData = (id: string) => {
+    let p = mapCache.get(id);
+    if (!p) { p = loadTown(id).catch(() => town); mapCache.set(id, p); }
+    return p;
+  };
+  let switching = 0;
+  let shownMap: string | null = null;
   let picked = localStorage.getItem('agentville.town');
-  const inView = (a: AgentState) => !a.town || a.town === current;
+  const inView = (a: AgentState) => !a.town || a.town === shown;
   const showTownLabels = () => {
     const t = towns.find((x) => x.id === current);
     world.folders = t?.folders ?? {};
     world.names = t?.names ?? {};
     $('#town-name').textContent = t ? `${t.world} · ${t.name}` : town.name;
   };
-  const setTown = (id: string | null, byUser = false) => {
+  const setTown = async (id: string | null, byUser = false) => {
     if (byUser && id) { picked = id; localStorage.setItem('agentville.town', id); }
     if (id === current) return;
     current = id;
-    world.clear();
+    shown = null; // robots wait until the town's map is loaded
+    const seq = ++switching;
+    shownMap = towns.find((t) => t.id === id)?.map ?? 'frostpeak';
+    const td = await mapData(shownMap);
+    if (seq !== switching) return; // a newer switch won
+    if (world.town !== td) await world.load(td); else world.clear();
+    if (seq !== switching) return;
+    shown = id;
     showTownLabels();
     for (const a of agents.values()) if (inView(a)) world.apply(a, true); // already at their buildings
     render();
@@ -55,7 +74,37 @@ async function main() {
     return (list.find((a) => a.status === 'waiting') ?? list[0])?.town ?? towns[0]?.id ?? null;
   };
   /** Jump to a robot, in whatever town it is. */
-  const goTo = (a: AgentState) => { if (a.town && a.town !== current) setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
+  const goTo = async (a: AgentState) => { showMap(false); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
+  /** A robot appeared or changed (live service or demo). */
+  const applyAgent = (s: AgentState) => {
+    agents.set(s.id, s);
+    if (current === null && towns.length) setTown(autoTown()); // on connect, the towns list (after the robots) picks
+    if (inView(s)) world.apply(s);
+    else if (world.robots.has(s.id)) world.remove(s.id); // it left for another town: walks off to the station
+  };
+  /** Folder labels per demo town, from its own map (loaded first). */
+  const demoTowns = async () => {
+    for (const t of DEMO_TOWNS) t.folders = demoFolders(await mapData(t.map));
+    return DEMO_TOWNS;
+  };
+  const removeAgent = (id: string) => { agents.delete(id); world.remove(id); };
+
+  // world map: the towns of one world, over the town view (button or M)
+  let mapOpen = false;
+  let mapWorld: string | null = null;
+  const worldMap = new WorldMap($('#worldview'), await loadWorldArt(), {
+    openTown: (id) => { setTown(id, true); showMap(false); },
+    showWorld: (w) => { mapWorld = w; render(); },
+  });
+  const showMap = (open: boolean) => {
+    mapOpen = open;
+    if (open) mapWorld = towns.find((t) => t.id === current)?.world ?? towns[0]?.world ?? null;
+    $('#worldview').hidden = !open;
+    $('#t-map').classList.toggle('on', open);
+    $('#t-map').textContent = open ? 'Town view' : 'World map';
+    $('.zoom').style.display = open ? 'none' : '';
+    render();
+  };
 
   if (live) {
     $('#mode').textContent = 'Connecting…';
@@ -67,17 +116,14 @@ async function main() {
     const canNotify = () => 'Notification' in window && Notification.permission === 'granted';
     const showAllow = () => { allowBtn.style.display = alertsBtn.dataset.on && 'Notification' in window && Notification.permission === 'default' ? '' : 'none'; };
     const conn = connectLive(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, {
-      apply: (s) => {
-        agents.set(s.id, s);
-        if (current === null && towns.length) setTown(autoTown()); // on connect, the towns list (after the robots) picks
-        if (inView(s)) world.apply(s);
-        else if (world.robots.has(s.id)) world.remove(s.id); // it left for another town: walks off to the station
-      },
-      remove: (id) => { agents.delete(id); world.remove(id); },
+      apply: applyAgent,
+      remove: removeAgent,
       log,
       towns: (list) => {
         towns = list;
-        if (!towns.some((t) => t.id === current)) setTown(autoTown());
+        const t = towns.find((x) => x.id === current);
+        if (!t) setTown(autoTown());
+        else if (t.map !== shownMap) { current = null; setTown(t.id); } // its map changed (agentville.json "town")
         else showTownLabels();
       },
       alerts: (on) => { alertsBtn.classList.toggle('on', on); alertsBtn.dataset.on = on ? '1' : ''; showAllow(); },
@@ -99,8 +145,10 @@ async function main() {
     $('#mode').className = 'mode demo';
     $('#t-alerts').style.display = 'none';
     $('#t-allow').style.display = 'none';
-    world.folders = DEMO_FOLDERS;
-    demo = new Demo(town, sprites.colors(), (s) => world.apply(s), (id) => world.remove(id), log, (id) => world.robots.get(id)?.mode === 'present');
+    towns = await demoTowns();
+    const demoMaps = new Map(await Promise.all(towns.map(async (t) => [t.id, await mapData(t.map)] as const)));
+    // robots in towns you aren't looking at count as arrived, so they keep working
+    demo = new Demo((id) => demoMaps.get(id)!, sprites.colors(), applyAgent, removeAgent, log, (id) => !inView(agents.get(id)!) || world.robots.get(id)?.mode === 'present');
     $('#t-add').onclick = () => demo!.spawn();
     log('Demo mode: simulated agents');
     demo.start(5);
@@ -123,7 +171,9 @@ async function main() {
   let lastDetails = '';
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'Escape' && selected) { selected = null; render(); }
+    if (e.key === 'Escape' && mapOpen) showMap(false);
+    else if (e.key === 'Escape' && selected) { selected = null; render(); }
+    else if (e.key === 'm' || e.key === 'M') showMap(!mapOpen);
     else if (e.key === '+' || e.key === '=') world.zoomBy(1.4);
     else if (e.key === '-') world.zoomBy(1 / 1.4);
     else if (e.key === '0') world.resetZoom();
@@ -150,18 +200,18 @@ async function main() {
       $('#details').querySelectorAll<HTMLElement>('[data-id]').forEach((el) => (el.onclick = () => select(el.dataset.id!)));
     }
     // needs-you across every town; click to jump to the first one
-    const all = live ? [...agents.values()] : list;
+    const all = [...agents.values()];
     const waiting = all.filter((a) => a.status === 'waiting');
     $('#needs').textContent = waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : '';
     $('#needs').onclick = waiting.length ? () => goTo(waiting[0]) : null;
     renderPicker();
+    if (mapOpen && mapWorld) worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
   };
 
   // town picker: towns grouped by world, with robot and needs-you counts
   const pick = $<HTMLSelectElement>('#town-pick');
   let lastPick = '';
   const renderPicker = () => {
-    if (!live) return;
     const byWorld = new Map<string, TownInfo[]>();
     for (const t of towns) (byWorld.get(t.world) ?? byWorld.set(t.world, []).get(t.world)!).push(t);
     const counts = (id: string) => {
@@ -173,7 +223,7 @@ async function main() {
     if (html !== lastPick) { lastPick = html; pick.innerHTML = html; }
     pick.style.display = towns.length ? '' : 'none';
   };
-  pick.onchange = () => setTown(pick.value, true);
+  pick.onchange = () => { setTown(pick.value, true); showMap(false); };
   world.onChange = render;
   setInterval(render, 300);
 
@@ -183,6 +233,7 @@ async function main() {
     b.classList.toggle('on', get());
     b.onclick = () => { set(!get()); b.classList.toggle('on', get()); };
   };
+  $('#t-map').onclick = () => showMap(!mapOpen);
   $('#z-in').onclick = () => world.zoomBy(1.4);
   $('#z-out').onclick = () => world.zoomBy(1 / 1.4);
   $('#z-fit').onclick = () => world.resetZoom();

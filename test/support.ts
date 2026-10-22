@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { after } from 'node:test';
 import { Sessions } from '../server/state';
 import { Worlds } from '../server/worlds';
+import { TownMaps } from '../server/townmaps';
 
 const townFile = new URL('../public/towns/frostpeak/town.json', import.meta.url);
 const town = JSON.parse(fs.readFileSync(townFile, 'utf8'));
@@ -48,7 +49,8 @@ export function newTown(worlds?: Worlds) {
   const emitted: any[] = [];
   const home = tmpDir('home');
   worlds ??= new Worlds({ configFile: path.join(home, 'no-worlds.json'), claudeDir: path.join(home, '.claude'), home });
-  const s = new Sessions(buildings, ['orange', 'blue', 'green'], (m) => emitted.push(m), worlds);
+  const s = new Sessions({ frostpeak: buildings }, ['orange', 'blue', 'green'], (m) => emitted.push(m), worlds,
+    new TownMaps(['frostpeak'], { file: path.join(home, '.agentville', 'towns.json') }));
   const send = (root: string, e: Record<string, unknown>, session = 's1') => s.handle({ session_id: session, cwd: root, ...e } as any) as any;
   return {
     s, emitted, send,

@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { AgentState, TownInfo } from '../src/types';
 import { activeTodo, friendlyTask, isPlanTool } from './friendly';
 import { Worlds } from './worlds';
+import { TownMaps } from './townmaps';
 
 export interface HookEvent {
   hook_event_name: string;
@@ -24,16 +25,21 @@ export interface HookEvent {
 
 interface Building { id: string; name?: string; role?: string }
 
+/** One town map's buildings by job: folder slots (most prominent first) and the special buildings. */
+interface Layout { slots: string[]; root: string; misc: string; plaza?: string; commands?: string; ids: Map<string, string> }
+
 /** One repo (a town): its folder → building layout. */
 interface Project {
+  /** the town map it uses (Frostpeak, Maplewood…) */
+  townMap: string;
   map: Map<string, string>; // folder -> building, in first-used order
   rank: string[]; // top-level folders, busiest first (git history)
   config: Config;
   configStamp: string; // agentville.json mtime ('' when absent), to reload on change
 }
 
-/** agentville.json at the repo root: pin folders to buildings, rename buildings, name the world. */
-interface Config { folders: Record<string, string>; names: Record<string, string>; world?: string }
+/** agentville.json at the repo root: pin folders to buildings, rename buildings, name the world, pick the town map. */
+interface Config { folders: Record<string, string>; names: Record<string, string>; world?: string; town?: string }
 
 const NAMES = ['Atlas', 'Byte', 'Cleo', 'Dex', 'Echo', 'Fern', 'Gus', 'Iris', 'Juno', 'Kit', 'Lumen', 'Milo'];
 const STALE_MS = 30 * 60 * 1000;
@@ -78,26 +84,37 @@ export class Sessions {
   private helpers = new Map<string, Helper>(); // helper robot id -> helper
   private projects = new Map<string, Project>(); // project root -> layout
   private nameIdx = 0;
-  private buildingIds: Map<string, string>; // lowercased id or name -> id (for agentville.json)
   private gitRoots = new Map<string, string>();
-  private slots: string[];
-  private rootBuilding: string;
-  private miscBuilding: string;
-  private plaza?: string;
-  /** where work that touches no file happens: shell commands, browser, web */
-  private commandsBuilding?: string;
+  private layouts = new Map<string, Layout>();
 
-  constructor(buildings: Building[], private colors: string[], private emit: Emit, readonly worlds = new Worlds()) {
-    this.slots = buildings.filter((b) => !b.role).map((b) => b.id);
-    this.rootBuilding = buildings.find((b) => b.role === 'root')?.id ?? this.slots[0];
-    this.miscBuilding = buildings.find((b) => b.role === 'misc')?.id ?? this.slots[this.slots.length - 1];
-    this.plaza = buildings.find((b) => b.role === 'plaza')?.id;
-    this.commandsBuilding = buildings.find((b) => b.role === 'commands')?.id;
-    // folders may live in any building except the station and the plaza
-    this.buildingIds = new Map(buildings.filter((b) => b.role !== 'station' && b.role !== 'plaza')
-      .flatMap((b) => [[b.id.toLowerCase(), b.id], ...(b.name ? [[b.name.toLowerCase(), b.id]] : [])] as [string, string][]));
+  /**
+   * `maps`: every town map's buildings, by map id (in preference order). Each repo (town) uses one;
+   * `townMaps` remembers which. Buildings in robot states are ids in their own town's map.
+   */
+  constructor(private maps: Record<string, Building[]>, private colors: string[], private emit: Emit,
+    readonly worlds = new Worlds(), private townMaps = new TownMaps(Object.keys(maps))) {
     setInterval(() => this.sweep(), 60_000).unref();
   }
+
+  /** A town map's buildings by job. */
+  private layout(mapId: string): Layout {
+    let l = this.layouts.get(mapId);
+    if (l) return l;
+    const buildings = this.maps[mapId] ?? Object.values(this.maps)[0];
+    const slots = buildings.filter((b) => !b.role).map((b) => b.id);
+    const role = (r: string) => buildings.find((b) => b.role === r)?.id;
+    l = {
+      slots, root: role('root') ?? slots[0], misc: role('misc') ?? slots[slots.length - 1], plaza: role('plaza'), commands: role('commands'),
+      // agentville.json may name any building except the station and the plaza, by id or name
+      ids: new Map(buildings.filter((b) => b.role !== 'station' && b.role !== 'plaza')
+        .flatMap((b) => [[b.id.toLowerCase(), b.id], ...(b.name ? [[b.name.toLowerCase(), b.id]] : [])] as [string, string][])),
+    };
+    this.layouts.set(mapId, l);
+    return l;
+  }
+
+  /** The layout of the map a town (repo root) uses. */
+  private L(root: string) { return this.layout(this.project(root).townMap); }
 
   snapshot(): AgentState[] {
     return [...[...this.sessions.values()].map((s) => s.state), ...[...this.helpers.values()].map((h) => h.state)];
@@ -134,7 +151,7 @@ export class Sessions {
         st.status = 'working';
         st.task = s.todo ?? 'Thinking…';
         // back to work: leave the plaza for the last building, or the commands building
-        if (st.building === this.plaza) this.moveTo(s, s.lastWork ?? this.commandsBuilding);
+        if (st.building === this.L(s.root).plaza) this.moveTo(s, s.lastWork ?? this.L(s.root).commands);
         break;
       case 'PreToolUse': {
         const todo = activeTodo(e);
@@ -148,11 +165,12 @@ export class Sessions {
         // while, so a quick command between edits doesn't make it run back and forth.
         // work in another repo: the robot goes to that town (edits at once, other work once it has stayed put)
         const town = this.townOf(s.root, e);
-        const settled = Date.now() - s.lastMove > STICKY_MS || st.building === this.plaza;
+        const settled = Date.now() - s.lastMove > STICKY_MS || st.building === this.L(s.root).plaza;
         if (town && (isEdit(e.tool_name) || settled)) this.changeTown(s, town);
+        const L = this.L(s.root);
         const file = this.buildingFor(s.root, e);
-        const b = file ?? (touchesNoFile(e) ? this.commandsBuilding : undefined);
-        const sticky = isQuick(e.tool_name) || (!file && st.building !== this.plaza);
+        const b = file ?? (touchesNoFile(e) ? L.commands : undefined);
+        const sticky = isQuick(e.tool_name) || (!file && st.building !== L.plaza);
         if (b && b !== st.building && (!sticky || Date.now() - s.lastMove > STICKY_MS)) this.moveTo(s, b);
         // its helper robot appears when the subagent starts (SubagentStart or its first event)
         if (e.tool_name === 'Task' || e.tool_name === 'Agent') this.expectHelper(s, e);
@@ -184,7 +202,7 @@ export class Sessions {
         // finished: gather at the plaza (watching the tree) until the next prompt
         st.status = 'idle';
         st.task = undefined;
-        if (this.plaza) st.building = this.plaza;
+        st.building = this.L(s.root).plaza ?? st.building;
         break;
       case 'SubagentStop': // without an agent_id: the oldest helper finished
         this.endHelper(s, s.helpers.keys().next().value);
@@ -214,7 +232,8 @@ export class Sessions {
     s.project = this.townName(root);
     s.lastWork = undefined;
     s.lastMove = Date.now();
-    Object.assign(s.state, { town: root, project: s.project, building: this.commandsBuilding ?? this.rootBuilding });
+    const L = this.L(root);
+    Object.assign(s.state, { town: root, project: s.project, building: L.commands ?? L.root });
     this.emit({ type: 'log', html: `<b>${s.state.name}</b> went from ${esc(from)} to ${esc(s.project)}` });
   }
 
@@ -267,11 +286,12 @@ export class Sessions {
         if (town && (isEdit(e.tool_name) || Date.now() - h.lastMove > STICKY_MS)) {
           this.visit(town);
           h.root = town;
-          Object.assign(st, { town, project: this.townName(town), building: this.commandsBuilding ?? this.rootBuilding });
+          const L = this.L(town);
+          Object.assign(st, { town, project: this.townName(town), building: L.commands ?? L.root });
           h.lastMove = Date.now();
         }
         const file = this.buildingFor(h.root, e);
-        const b = file ?? (touchesNoFile(e) ? this.commandsBuilding : undefined);
+        const b = file ?? (touchesNoFile(e) ? this.L(h.root).commands : undefined);
         const sticky = isQuick(e.tool_name) || !file;
         if (b && b !== st.building && (!sticky || Date.now() - h.lastMove > STICKY_MS)) { st.building = b; h.lastMove = Date.now(); }
         break;
@@ -297,7 +317,7 @@ export class Sessions {
     if (!b || b === s.state.building) return;
     s.state.building = b;
     s.lastMove = Date.now();
-    if (b !== this.plaza) s.lastWork = b;
+    if (b !== this.L(s.root).plaza) s.lastWork = b;
   }
 
   private start(e: HookEvent): Session {
@@ -311,7 +331,7 @@ export class Sessions {
     const name = NAMES[this.nameIdx++ % NAMES.length];
     const project = this.townName(root);
     const s: Session = {
-      state: { id: e.session_id, name, color, building: this.plaza ?? this.rootBuilding, status: 'idle', project, town: root, startedAt: Date.now() },
+      state: { id: e.session_id, name, color, building: this.L(root).plaza ?? this.L(root).root, status: 'idle', project, town: root, startedAt: Date.now() },
       root, project, lastSeen: Date.now(), lastMove: 0, helpers: new Map(), pending: [], helperSeq: 1, endedAgents: new Set(),
     };
     this.sessions.set(e.session_id, s);
@@ -402,7 +422,7 @@ export class Sessions {
     const isDir = !path.extname(abs) && (i.path !== undefined || e.tool_name === 'Bash');
     // commands run from the project root don't move the robot; root files go to the root building
     if (parts.length === 0 && e.tool_name === 'Bash') return;
-    if (parts.length === 0 || (parts.length === 1 && !isDir)) return this.rootBuilding;
+    if (parts.length === 0 || (parts.length === 1 && !isDir)) return this.L(root).root;
     return this.assign(root, parts[0]);
   }
 
@@ -410,7 +430,7 @@ export class Sessions {
     const p = this.project(root);
     let b = p.map.get(folder);
     if (!b) {
-      b = p.config.folders[folder] ?? this.pickSlot(p, folder);
+      b = p.config.folders[folder] ?? this.pickSlot(p, this.layout(p.townMap), folder);
       p.map.set(folder, b);
     }
     return b;
@@ -421,13 +441,13 @@ export class Sessions {
    * history) hold the most prominent buildings (town.json order) even before they're used; other
    * folders take the best free building nobody holds, then the least prominent free one; then misc.
    */
-  private pickSlot(p: Project, folder: string) {
+  private pickSlot(p: Project, L: Layout, folder: string) {
     const pinned = new Set(Object.values(p.config.folders));
-    const auto = this.slots.filter((x) => !pinned.has(x));
+    const auto = L.slots.filter((x) => !pinned.has(x));
     const ranked = p.rank.filter((f) => !(f in p.config.folders)).slice(0, auto.length);
     const taken = new Set(p.map.values());
     const free = auto.filter((x) => !taken.has(x));
-    if (!free.length) return this.miscBuilding;
+    if (!free.length) return L.misc;
     const own = auto[ranked.indexOf(folder)];
     if (own && free.includes(own)) return own;
     const held = new Set(ranked.filter((f) => !p.map.has(f)).map((f) => auto[ranked.indexOf(f)]));
@@ -441,22 +461,28 @@ export class Sessions {
     try { stamp = String(fs.statSync(file).mtimeMs); } catch { /* no override file */ }
     let p = this.projects.get(root);
     if (!p || p.configStamp !== stamp) {
-      p = { map: new Map(), rank: p?.rank ?? gitRank(root), config: this.readConfig(file, stamp), configStamp: stamp };
+      const raw = readJson(file, stamp);
+      // the town map: picked in agentville.json, else remembered/assigned (a map no other town in its world has yet)
+      const pinned = typeof raw?.town === 'string' && raw.town in this.maps ? raw.town : undefined;
+      if (typeof raw?.town === 'string' && !pinned) console.error(`${file}: unknown town map "${raw.town}" (maps: ${Object.keys(this.maps).join(', ')}).`);
+      const world = this.worlds.worldOf(root, typeof raw?.world === 'string' ? raw.world : undefined);
+      const townMap = pinned ?? this.townMaps.mapFor(root, (other) => this.worldOfRoot(other) === world);
+      p = { townMap, map: new Map(), rank: p?.rank ?? gitRank(root), config: this.readConfig(file, raw, this.layout(townMap)), configStamp: stamp };
       this.projects.set(root, p);
     }
     return p;
   }
 
-  private readConfig(file: string, stamp: string): Config {
+  /** A known town's world (with its agentville.json "world"); for other repos, the automatic one. */
+  private worldOfRoot(root: string) {
+    return this.worlds.worldOf(root, this.projects.get(root)?.config.world);
+  }
+
+  private readConfig(file: string, raw: any, L: Layout): Config {
     const config: Config = { folders: {}, names: {} };
-    if (!stamp) return config;
-    let raw: any;
-    try { raw = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {
-      console.error(`Ignoring ${file}: it isn't valid JSON.`);
-      return config;
-    }
+    if (!raw) return config;
     const building = (v: unknown, what: string) => {
-      const id = typeof v === 'string' ? this.buildingIds.get(v.toLowerCase()) : undefined;
+      const id = typeof v === 'string' ? L.ids.get(v.toLowerCase()) : undefined;
       if (!id) console.error(`${file}: unknown building "${v}" for ${what} (ignored).`);
       return id;
     };
@@ -469,6 +495,7 @@ export class Sessions {
       if (id && typeof v === 'string' && v.trim()) config.names[id] = v.trim().slice(0, 40);
     }
     if (typeof raw?.world === 'string' && raw.world.trim()) config.world = raw.world.trim().slice(0, 40);
+    if (typeof raw?.town === 'string') config.town = raw.town;
     return config;
   }
 
@@ -478,11 +505,18 @@ export class Sessions {
       const p = this.project(root);
       const folders: Record<string, string[]> = {};
       const add = (b: string, f: string) => (folders[b] ??= []).includes(f) || folders[b].push(f);
-      add(this.rootBuilding, 'root files');
-      if (this.commandsBuilding) add(this.commandsBuilding, 'commands & tools');
+      const L = this.layout(p.townMap);
+      add(L.root, 'root files');
+      if (L.commands) add(L.commands, 'commands & tools');
       for (const [f, b] of p.map) add(b, f);
-      return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), folders, names: { ...p.config.names } };
+      return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), map: p.townMap, spot: false, folders, names: { ...p.config.names } };
     });
+    // on the world map, each town map's spot goes to the town that got that map first in its world
+    const holder = new Map<string, TownInfo>();
+    for (const t of [...list].sort((a, b) => this.townMaps.order(a.id) - this.townMaps.order(b.id) || a.name.localeCompare(b.name))) {
+      const k = `${t.world}\0${t.map}`;
+      if (!holder.has(k)) { holder.set(k, t); t.spot = true; }
+    }
     // two towns in one world with the same folder name: add the parent folder
     for (const t of list) if (list.some((o) => o !== t && o.world === t.world && path.basename(o.id) === path.basename(t.id)))
       t.name = `${path.basename(path.dirname(t.id))}/${t.name}`;
@@ -529,6 +563,15 @@ function gitRank(root: string): string[] {
   }
   const isDir = (f: string) => { try { return fs.statSync(path.join(root, f)).isDirectory(); } catch { return false; } };
   return [...count].filter(([f]) => isDir(f)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([f]) => f);
+}
+
+/** agentville.json's contents ('' stamp: no file), or undefined when it's missing or not valid JSON. */
+function readJson(file: string, stamp: string): any {
+  if (!stamp) return undefined;
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch {
+    console.error(`Ignoring ${file}: it isn't valid JSON.`);
+    return undefined;
+  }
 }
 
 /** The file or folder a tool call works on (for Bash: its current folder). MCP tools may send other types. */

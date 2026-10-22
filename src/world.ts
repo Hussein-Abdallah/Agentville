@@ -41,6 +41,7 @@ export class World {
   private zoom = 1;
   private center: [number, number] = [0, 0];
   private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
+  private bg = new Sprite();
   private dragged = false;
 
   constructor(private host: HTMLElement, public town: TownData, public sprites: RobotSprites) {}
@@ -48,22 +49,13 @@ export class World {
   async init() {
     await this.app.init({ resizeTo: this.host, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(devicePixelRatio, 2) });
     this.host.appendChild(this.app.canvas);
-    const bg = new Sprite(await Assets.load(this.town.image));
-    bg.width = this.town.size[0]; bg.height = this.town.size[1];
     this.robotLayer.sortableChildren = true;
-    this.scene.addChild(bg, this.glowLayer, this.pathLayer, this.labelLayer, this.robotLayer, this.tagLayer, this.bubbleLayer, this.tipLayer);
+    this.scene.addChild(this.bg, this.glowLayer, this.pathLayer, this.labelLayer, this.robotLayer, this.tagLayer, this.bubbleLayer, this.tipLayer);
     this.bubbleLayer.sortableChildren = true;
     this.tagLayer.sortableChildren = true;
     this.app.stage.addChild(this.scene);
     this.glowTex = makeGlowTexture();
     this.glowLayer.addChild(this.ripples);
-    for (const k of Object.keys(this.town.buildings)) {
-      const g = new Sprite(this.glowTex);
-      g.anchor.set(0.5); g.alpha = 0; g.blendMode = 'add';
-      g.position.set(...this.town.buildings[k].door);
-      this.glowLayer.addChild(g); this.glows.set(k, g);
-      const l = new Container(); this.labelLayer.addChild(l); this.labels.set(k, l);
-    }
     this.app.stage.eventMode = 'static';
     this.app.stage.on('pointermove', (e) => this.pointerMove(e.global.x, e.global.y));
     this.app.stage.on('pointertap', (e) => { if (!this.dragged) this.pointerTap(e.global.x, e.global.y); });
@@ -87,10 +79,32 @@ export class World {
       const r = this.app.canvas.getBoundingClientRect();
       this.zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
-    this.center = [this.town.size[0] / 2, this.town.size[1] / 2];
+    await this.load(this.town);
     this.app.ticker.add((t) => this.tick(t.deltaMS / 1000));
     window.addEventListener('resize', () => this.fit());
     this.fit();
+  }
+
+  /** Show a town map (background, building glows and labels). Robots are cleared; add them again after. */
+  async load(town: TownData) {
+    // load the picture first, then swap everything at once: the ticker must never see a half-switched town
+    const tex = await Assets.load(town.image);
+    this.clear();
+    this.town = town;
+    this.bg.texture = tex;
+    this.bg.width = town.size[0]; this.bg.height = town.size[1];
+    for (const g of this.glows.values()) g.destroy();
+    for (const l of this.labels.values()) l.destroy({ children: true });
+    this.glows.clear(); this.labels.clear(); this.labelKey.clear();
+    for (const [k, b] of Object.entries(town.buildings)) {
+      const g = new Sprite(this.glowTex);
+      g.anchor.set(0.5); g.alpha = 0; g.blendMode = 'add';
+      g.position.set(...b.door);
+      this.glowLayer.addChild(g); this.glows.set(k, g);
+      const l = new Container(); this.labelLayer.addChild(l); this.labels.set(k, l);
+    }
+    this.hovered = null;
+    this.resetZoom();
   }
 
   /** Add or update an agent. `instant`: a new robot stands at its building instead of walking in from the station. */
@@ -138,7 +152,7 @@ export class World {
    * names (Church, Hot springs…) mean nothing for code, so they're only a fallback (plaza, station).
    */
   placeName(k: string, short = false) {
-    const f = this.folders[k] ?? [];
+    const f = this.folders?.[k] ?? [];
     const fl = short && f.length > 2 ? `${f.slice(0, 2).join(', ')} +${f.length - 2}` : f.join(', ');
     const n = this.names[k];
     return n ? (fl ? `${n}  ·  ${fl}` : n) : fl;

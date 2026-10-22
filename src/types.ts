@@ -35,6 +35,10 @@ export interface TownInfo {
   /** display name: the repo folder (with its parent when two towns in a world share a name) */
   name: string;
   world: string;
+  /** the town map it uses (frostpeak, maplewood…) */
+  map: string;
+  /** it holds its map's spot on the world map (else it's a signpost on the railway) */
+  spot: boolean;
   /** folder names per building */
   folders: Record<string, string[]>;
   /** buildings renamed in agentville.json */

@@ -52,3 +52,38 @@ aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; co
 #stage .zoom button { width: 30px; height: 30px; padding: 0; font-size: 16px; line-height: 1; background: rgba(27, 33, 64, .88); }
 #town-pick { background: #1b2140; color: #dfe3f7; border: 1px solid #2c3462; border-radius: 8px; padding: 4px 8px; font-size: 13px; max-width: 320px; }
 header .needs { cursor: pointer; }
+
+/* world map: the painted map of a world's towns, over the town view */
+#worldview { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden; background: #070915; }
+#worldview[hidden] { display: none; }
+.wm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 14px 18px 8px; }
+.wm-title { font-size: 20px; font-weight: 700; letter-spacing: .3px; }
+.wm-sub { color: #9aa3cc; font-size: 13px; margin-top: 2px; }
+.wm-sub b { color: #ffb27a; font-weight: 600; }
+.wm-tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.wm-tabs button.on { background: #2f3a78; border-color: #6672c2; }
+.wm-map { position: relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; margin: 0 12px 12px; }
+.wm-box { position: relative; border-radius: 10px; overflow: hidden; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.wm-art { position: absolute; inset: 0; width: 100%; height: 100%; display: block; user-select: none; -webkit-user-drag: none; }
+.wm-train { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.wm-train circle { fill: #ffe08a; filter: drop-shadow(0 0 6px #ffb347) drop-shadow(0 0 2px #fff); }
+.wm-marks { position: absolute; inset: 0; }
+.wm-mark { position: absolute; transform: translate(-50%, -50%); cursor: pointer; text-align: center; padding: 6px 12px 7px; border-radius: 12px;
+  background: rgba(13, 16, 36, .82); border: 1px solid rgba(141, 151, 216, .45); backdrop-filter: blur(3px); box-shadow: 0 6px 18px rgba(0,0,0,.45);
+  transition: transform .15s, border-color .15s; white-space: nowrap; }
+.wm-mark:hover { transform: translate(-50%, -54%); border-color: #c3c9ff; }
+.wm-mark.spot .wm-name { font-size: 15px; }
+.wm-mark.post { padding: 4px 10px 5px; border-radius: 8px; background: rgba(74, 52, 30, .9); border-color: #b88a55; }
+.wm-mark.post .wm-name { font-size: 12.5px; }
+.wm-mark.current { border-color: #e8ecff; box-shadow: 0 0 0 2px rgba(232,236,255,.35), 0 6px 18px rgba(0,0,0,.45); }
+.wm-mark.needs { border-color: #ea580c; animation: pulse 1.4s infinite; }
+.wm-mark.free { cursor: default; opacity: .6; }
+.wm-mark.free:hover { transform: translate(-50%, -50%); }
+.wm-name { font-weight: 700; color: #fff; }
+.wm-meta { display: flex; gap: 4px; align-items: center; justify-content: center; margin-top: 4px; min-height: 12px; }
+.wm-badge { background: #c2410c; color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; vertical-align: 1px; }
+.wm-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(13,16,36,.9); }
+.wm-dot.sub { width: 7px; height: 7px; }
+.wm-dot.waiting { box-shadow: 0 0 0 1.5px rgba(13,16,36,.9), 0 0 0 3.5px #ea580c; }
+.wm-dot.idle { opacity: .55; }
+.wm-quiet, .wm-more { color: #aab2d8; font-size: 11px; }

@@ -79,7 +79,9 @@ Add `"world": "Acme"` to put the repo in a world of your choice (see Worlds and 
 
 Every repo is a **town** with its own folder → building layout, and towns are grouped into **worlds** (projects). The header has a town picker, grouped by world, with how many robots are in each town and how many need you. Pick a town to see it; your choice is remembered. On first open the page shows the town where a robot needs you, else the busiest one. Clicking "needs you" in the header jumps to that robot's town.
 
-- **Moving between towns:** when a session starts working in another repo, its robot goes to that town (edits there move it at once; reads and commands once it has stayed put 12 s). Files outside any repo never move it. Helpers move on their own. Until more town maps exist, every town uses the Frostpeak map.
+- **Three town maps:** Frostpeak (winter), Maplewood (autumn) and Azure Harbor (summer). Each repo gets a map no other repo in its world has yet (Frostpeak first), remembered in `~/.agentville/towns.json` so it keeps its look; edit that file, or put `"town": "maplewood"` (or `frostpeak`, `azure-harbor`) in the repo's `agentville.json`, to choose.
+- **World map:** the **World map** button (or `M`) shows the painted valley with the world's towns at their spots: the repo that got each map first in a world takes that town's spot; more repos appear as signposts along the railway. Each marker shows the repo name, a dot per robot (ringed in orange when it needs you) and a needs-you badge; spots no repo has yet are dimmed. Click a town to open it; tabs at the top switch worlds; `Esc` or **Town view** goes back. A train runs on the painted railway. The demo (`?demo`) has five made-up towns in two worlds, on all three maps.
+- **Moving between towns:** when a session starts working in another repo, its robot goes to that town (edits there move it at once; reads and commands once it has stayed put 12 s). Files outside any repo never move it. Helpers move on their own.
 - **Worlds, automatically:** Agentville finds your dev folder (the deepest folder holding every repo it knows, including repos you've used Claude Code in before) and each folder directly under it is a world: `~/Dev/Acme/api` and `~/Dev/Acme/clients/web` → world **Acme**, `~/Dev/Blog/site` → **Blog**. Two towns with the same name in a world get their parent folder added (`clients/web`).
 - **Worlds, your way:** `~/.agentville/worlds.json` wins over everything, then a repo's `"world"` in `agentville.json`, then the automatic rule:
 
@@ -113,7 +115,7 @@ When a robot starts waiting for you, you get a notification ("Atlas needs you", 
 
 ## Privacy
 
-Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps robot state in memory. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. To group repos into worlds it reads, once at start, the first `cwd` line of the newest transcript in each `~/.claude/projects/` folder (nothing else from them). The only thing written to disk is the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
+Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps robot state in memory. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. To group repos into worlds it reads, once at start, the first `cwd` line of the newest transcript in each `~/.claude/projects/` folder (nothing else from them). Written to disk: `~/.agentville/towns.json` (which town map each repo has), and the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
 
 ## Code
 
@@ -123,6 +125,10 @@ Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps 
 | `server/state.ts` | Hook events → robot states (sessions, helpers, buildings, needs-you) |
 | `server/log.ts` | Event log (`logs/`) |
 | `server/worlds.ts` | Groups towns (repos) into worlds: automatic by folder, `~/.agentville/worlds.json` overrides |
+| `server/townmaps.ts` | Which town map each repo gets (`~/.agentville/towns.json`) |
+| `src/worldview.ts` | The world map: painted map, town spots, signposts, train |
+| `public/towns/<map>/` | Each town map: picture and `town.json` (buildings, doors, labels, roles, road paths) |
+| `public/worlds/valley/` | The painted world map and its `world.json` (town spots, stations, railway) |
 | `server/notify.ts` | Needs-you alerts: macOS notification + sound |
 | `server/friendly.ts` | Friendly bubble text from tool calls |
 | `server/hooks.ts` | Install/uninstall the hooks in `~/.claude/settings.json` |
