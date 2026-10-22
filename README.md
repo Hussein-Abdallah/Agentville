@@ -29,6 +29,8 @@ Then use Claude Code as usual. Each session appears as a robot. Sessions that we
 |---|---|
 | `npm start` | Build the app and run Agentville (opens the browser) |
 | `npm run simulate` | Send fake Claude Code events, to see it working without Claude |
+| `npm test` | Run the tests (Node's test runner; no server, sound or notification needed) |
+| `npm run typecheck` | Type-check the page, the service and the tests |
 | `npm run hooks:status` | Show whether the hooks are installed |
 | `npm run hooks:uninstall` | Remove the hooks from Claude Code (backup saved first) |
 | `npm run dev` + `npm run serve` | Development: live-reloading UI (port 5173) plus the service (port 4917) |
@@ -108,6 +110,7 @@ Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps 
 | `server/friendly.ts` | Friendly bubble text from tool calls |
 | `server/hooks.ts` | Install/uninstall the hooks in `~/.claude/settings.json` |
 | `server/simulate.ts` | Fake events for testing |
+| `test/` | Tests: buildings, sessions, helper robots, alerts, bubble text (`support.ts` has the shared setup) |
 | `src/live.ts` | UI side of the WebSocket (auto-reconnects) |
 | `src/world.ts` | PixiJS scene: background, glows, labels, bubbles (stacked, clicked one on top), robots |
 | `src/robot.ts` | One robot: walking, turning, animation, bubble, name tag |

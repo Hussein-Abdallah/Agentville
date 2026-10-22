@@ -7,11 +7,12 @@
     "serve": "tsx server/index.ts",
     "dev": "vite",
     "build": "tsc && vite build",
-    "typecheck": "tsc && tsc -p server",
+    "typecheck": "tsc && tsc -p server && tsc -p test",
     "hooks:install": "tsx server/hooks.ts install",
     "hooks:uninstall": "tsx server/hooks.ts uninstall",
     "hooks:status": "tsx server/hooks.ts status",
-    "simulate": "tsx server/simulate.ts"
+    "simulate": "tsx server/simulate.ts",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "pixi.js": "^8.22.0",
