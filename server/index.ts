@@ -27,10 +27,8 @@ const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', '
 const MAP_ORDER = ['frostpeak', 'maplewood', 'azure-harbor'];
 const mapIds = fs.readdirSync(path.join(PUBLIC, 'towns')).filter((d) => fs.existsSync(path.join(PUBLIC, 'towns', d, 'town.json')))
   .sort((a, b) => (MAP_ORDER.indexOf(a) + 1 || 99) - (MAP_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
-const maps = Object.fromEntries(mapIds.map((id) => {
-  const t = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', id, 'town.json'), 'utf8'));
-  return [id, Object.entries<any>(t.buildings).map(([b, d]) => ({ id: b, name: d.name, role: d.role }))];
-}));
+const townFiles = Object.fromEntries(mapIds.map((id) => [id, JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', id, 'town.json'), 'utf8'))]));
+const maps = Object.fromEntries(mapIds.map((id) => [id, Object.entries<any>(townFiles[id].buildings).map(([b, d]) => ({ id: b, name: d.name, role: d.role }))]));
 
 const clients = new Set<WebSocket>();
 const notifiers = new Set<WebSocket>(); // pages allowed to show browser notifications
@@ -40,7 +38,7 @@ const broadcast = (msg: object) => {
   for (const c of clients) if (c.readyState === WebSocket.OPEN) c.send(s);
 };
 let labelsKey = '';
-const sessions = new Sessions(maps, Object.keys(robot.colors), (msg) => {
+const sessions: Sessions = new Sessions(maps, Object.keys(robot.colors), (msg) => {
   if (msg.type === 'needs') {
     const via = alerts.needs(msg.state, msg.project, notifiers.size > 0);
     if (via === 'page') {
@@ -55,6 +53,9 @@ const sessions = new Sessions(maps, Object.keys(robot.colors), (msg) => {
   broadcast(msg);
   sendTowns();
 });
+
+// each town map's landscape ("land" in town.json), so a world sits on a matching spot of the planet
+sessions.lands = Object.fromEntries(Object.entries(townFiles).filter(([, t]) => typeof t.land === 'string').map(([id, t]) => [id, t.land]));
 
 /** The towns list (worlds, building labels) whenever it changes. */
 function sendTowns() {

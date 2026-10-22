@@ -39,6 +39,10 @@ export interface TownInfo {
   map: string;
   /** it holds its map's spot on the world map (else it's a signpost on the railway) */
   spot: boolean;
+  /** the world's first town (the repo that got its map earliest): its landscape decides where the world sits on the planet */
+  primary: boolean;
+  /** the landscape of its town map (from town.json "land"), e.g. "snow" */
+  land?: string;
   /** folder names per building */
   folders: Record<string, string[]>;
   /** buildings renamed in agentville.json */

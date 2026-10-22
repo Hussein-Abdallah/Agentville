@@ -86,6 +86,8 @@ export class Sessions {
   private nameIdx = 0;
   private gitRoots = new Map<string, string>();
   private layouts = new Map<string, Layout>();
+  /** each town map's landscape (town.json "land"), shown to the page for the planet */
+  lands: Record<string, string> = {};
 
   /**
    * `maps`: every town map's buildings, by map id (in preference order). Each repo (town) uses one;
@@ -509,13 +511,16 @@ export class Sessions {
       add(L.root, 'root files');
       if (L.commands) add(L.commands, 'commands & tools');
       for (const [f, b] of p.map) add(b, f);
-      return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), map: p.townMap, spot: false, folders, names: { ...p.config.names } };
+      return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), map: p.townMap, spot: false, primary: false,
+        land: this.lands[p.townMap], folders, names: { ...p.config.names } };
     });
     // on the world map, each town map's spot goes to the town that got that map first in its world
-    const holder = new Map<string, TownInfo>();
+    // and each world's first town (got its map earliest) is its primary town
+    const holder = new Map<string, TownInfo>(), first = new Set<string>();
     for (const t of [...list].sort((a, b) => this.townMaps.order(a.id) - this.townMaps.order(b.id) || a.name.localeCompare(b.name))) {
       const k = `${t.world}\0${t.map}`;
       if (!holder.has(k)) { holder.set(k, t); t.spot = true; }
+      if (!first.has(t.world)) { first.add(t.world); t.primary = true; }
     }
     // two towns in one world with the same folder name: add the parent folder
     for (const t of list) if (list.some((o) => o !== t && o.world === t.world && path.basename(o.id) === path.basename(t.id)))

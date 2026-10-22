@@ -4,6 +4,8 @@ import { RobotSprites } from './sprites';
 import { World } from './world';
 import { Demo, DEMO_TOWNS, demoFolders } from './demo';
 import { WorldMap, loadWorldArt } from './worldview';
+import { PlanetView } from './planet';
+import { WorldBoard } from './boardview';
 import { connectLive, serviceAvailable } from './live';
 import type { AgentState, TownData, TownInfo } from './types';
 
@@ -12,7 +14,6 @@ const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 async function main() {
   const sprites = new RobotSprites();
   const [town] = await Promise.all([loadTown('frostpeak'), sprites.init()]);
-  $('#town-name').textContent = town.name;
 
   const world = new World($('#stage'), town, sprites);
   await world.init();
@@ -49,7 +50,7 @@ async function main() {
     const t = towns.find((x) => x.id === current);
     world.folders = t?.folders ?? {};
     world.names = t?.names ?? {};
-    $('#town-name').textContent = t ? `${t.world} · ${t.name}` : town.name;
+    renderCrumbs();
   };
   const setTown = async (id: string | null, byUser = false) => {
     if (byUser && id) { picked = id; localStorage.setItem('agentville.town', id); }
@@ -74,7 +75,7 @@ async function main() {
     return (list.find((a) => a.status === 'waiting') ?? list[0])?.town ?? towns[0]?.id ?? null;
   };
   /** Jump to a robot, in whatever town it is. */
-  const goTo = async (a: AgentState) => { showMap(false); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
+  const goTo = async (a: AgentState) => { setView('town'); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
   /** A robot appeared or changed (live service or demo). */
   const applyAgent = (s: AgentState) => {
     agents.set(s.id, s);
@@ -90,20 +91,68 @@ async function main() {
   const removeAgent = (id: string) => { agents.delete(id); world.remove(id); };
 
   // world map: the towns of one world, over the town view (button or M)
-  let mapOpen = false;
+  // three levels: the planet (every world), a world map (one project's towns), a town (one repo)
+  type View = 'planet' | 'world' | 'town';
+  let view: View = 'town';
   let mapWorld: string | null = null;
-  const worldMap = new WorldMap($('#worldview'), await loadWorldArt(), {
-    openTown: (id) => { setTown(id, true); showMap(false); },
-    showWorld: (w) => { mapWorld = w; render(); },
+  const currentWorld = () => towns.find((t) => t.id === current)?.world ?? null;
+  // a world map is either the board (laid out by code, any number of towns) or the painted valley
+  let mapStyle: 'board' | 'painted' = localStorage.getItem('agentville.worldmap') === 'painted' ? 'painted' : 'board';
+  const board = new WorldBoard($('#boardview'), {
+    openTown: (id) => { setTown(id, true); setView('town'); },
+    showWorld: (w) => { mapWorld = w; renderCrumbs(); render(); },
   });
-  const showMap = (open: boolean) => {
-    mapOpen = open;
-    if (open) mapWorld = towns.find((t) => t.id === current)?.world ?? towns[0]?.world ?? null;
-    $('#worldview').hidden = !open;
-    $('#t-map').classList.toggle('on', open);
-    $('#t-map').textContent = open ? 'Town view' : 'World map';
-    $('.zoom').style.display = open ? 'none' : '';
+  // the board's ground: the world's patch of the planet (worked out once per world and set of towns)
+  let ground: { key: string; value?: { image: string; u: number; v: number } } = { key: '' };
+  const groundFor = (w: string) => {
+    const key = w + '|' + towns.filter((t) => t.world === w).map((t) => t.id).join(',');
+    if (ground.key !== key) {
+      ground = { key };
+      planet.whereIs(w, towns).then((p) => { if (ground.key === key && p) { ground.value = { image: planet.pictureUrl(), ...p }; render(); } });
+    }
+    return ground.value;
+  };
+  const worldMap = new WorldMap($('#worldview'), await loadWorldArt(), {
+    openTown: (id) => { setTown(id, true); setView('town'); },
+    showWorld: (w) => { mapWorld = w; renderCrumbs(); render(); },
+  });
+  const planet = new PlanetView($('#planetview'), {
+    openWorld: (w) => { mapWorld = w; setView('world'); },
+  });
+  const setView = (v: View) => {
+    view = v;
+    if (v === 'world') mapWorld ??= currentWorld() ?? towns[0]?.world ?? null;
+    if (v !== 'world' && v !== 'planet') mapWorld = null;
+    $('#worldview').hidden = v !== 'world' || mapStyle !== 'painted';
+    $('#boardview').hidden = v !== 'world' || mapStyle !== 'board';
+    $('#wm-style').hidden = v !== 'world';
+    $('#wm-style').textContent = mapStyle === 'board' ? 'Painted map' : 'Board';
+    $('#planetview').hidden = v !== 'planet';
+    $('.zoom').style.display = v === 'town' ? '' : 'none';
+    planet.show(v === 'planet', mapWorld ?? currentWorld());
+    renderCrumbs();
     render();
+  };
+  const up: Record<View, View> = { town: 'world', world: 'planet', planet: 'planet' };
+  const down: Record<View, View> = { planet: 'world', world: 'town', town: 'town' };
+  /** Planet › world › town, in the header; each part opens that level. */
+  const renderCrumbs = () => {
+    const w = view === 'town' ? currentWorld() : mapWorld ?? currentWorld();
+    const t = towns.find((x) => x.id === current);
+    const part = (label: string, to: View, on: boolean) => `<button data-view="${to}" class="${on ? 'on' : ''}">${esc(label)}</button>`;
+    $('#crumbs').innerHTML = [
+      part('Planet', 'planet', view === 'planet'),
+      w ? part(w, 'world', view === 'world') : '',
+      t && t.world === w ? part(t.name, 'town', view === 'town') : view === 'town' ? part(town.name, 'town', true) : '',
+    ].filter(Boolean).join('<span class="sep">›</span>');
+  };
+  $('#crumbs').onclick = (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-view]');
+    if (!b) return;
+    const v = b.dataset.view as View;
+    if (v === 'world') mapWorld = view === 'town' ? currentWorld() : mapWorld;
+    if (v === 'town' && mapWorld && mapWorld !== currentWorld()) return; // no town of that world is open
+    setView(v);
   };
 
   if (live) {
@@ -151,7 +200,7 @@ async function main() {
     demo = new Demo((id) => demoMaps.get(id)!, sprites.colors(), applyAgent, removeAgent, log, (id) => !inView(agents.get(id)!) || world.robots.get(id)?.mode === 'present');
     $('#t-add').onclick = () => demo!.spawn();
     log('Demo mode: simulated agents');
-    demo.start(5);
+    demo.start(12); // enough robots that bigger worlds aren't empty
   }
   // click a robot or card: show its details (click again, ✕ or Esc to close)
   let selected: string | null = null;
@@ -171,12 +220,12 @@ async function main() {
   let lastDetails = '';
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'Escape' && mapOpen) showMap(false);
+    if (e.key === 'Escape' && view !== 'town') setView(down[view]);
     else if (e.key === 'Escape' && selected) { selected = null; render(); }
-    else if (e.key === 'm' || e.key === 'M') showMap(!mapOpen);
-    else if (e.key === '+' || e.key === '=') world.zoomBy(1.4);
-    else if (e.key === '-') world.zoomBy(1 / 1.4);
-    else if (e.key === '0') world.resetZoom();
+    else if (e.key === 'm' || e.key === 'M') setView(up[view]);
+    else if (e.key === '+' || e.key === '=') (view === 'planet' ? planet : world).zoomBy(1.4);
+    else if (e.key === '-') (view === 'planet' ? planet : world).zoomBy(1 / 1.4);
+    else if (e.key === '0') (view === 'planet' ? planet : world).resetZoom();
   });
   const render = () => {
     const list = [...world.robots.values()].filter((r) => r.mode !== 'gone').map((r) => r.state);
@@ -205,7 +254,12 @@ async function main() {
     $('#needs').textContent = waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : '';
     $('#needs').onclick = waiting.length ? () => goTo(waiting[0]) : null;
     renderPicker();
-    if (mapOpen && mapWorld) worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
+    if (view === 'planet') planet.update({ towns, agents: [...agents.values()], current: mapWorld ?? currentWorld() });
+    if (view === 'world' && mapWorld && mapStyle === 'painted') worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
+    if (view === 'world' && mapWorld && mapStyle === 'board') board.update({
+      towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors,
+      image: (t) => `towns/${t.map}/town.jpg`, ground: groundFor(mapWorld),
+    });
   };
 
   // town picker: towns grouped by world, with robot and needs-you counts
@@ -223,7 +277,7 @@ async function main() {
     if (html !== lastPick) { lastPick = html; pick.innerHTML = html; }
     pick.style.display = towns.length ? '' : 'none';
   };
-  pick.onchange = () => { setTown(pick.value, true); showMap(false); };
+  pick.onchange = () => { setTown(pick.value, true); setView('town'); };
   world.onChange = render;
   setInterval(render, 300);
 
@@ -233,7 +287,12 @@ async function main() {
     b.classList.toggle('on', get());
     b.onclick = () => { set(!get()); b.classList.toggle('on', get()); };
   };
-  $('#t-map').onclick = () => showMap(!mapOpen);
+  $('#wm-style').onclick = () => {
+    mapStyle = mapStyle === 'board' ? 'painted' : 'board';
+    localStorage.setItem('agentville.worldmap', mapStyle);
+    setView('world');
+  };
+  renderCrumbs();
   $('#z-in').onclick = () => world.zoomBy(1.4);
   $('#z-out').onclick = () => world.zoomBy(1 / 1.4);
   $('#z-fit').onclick = () => world.resetZoom();

@@ -1,0 +1,195 @@
+{
+ "id": "many-lands-1",
+ "image": "planet.jpg",
+ "size": [
+  4096,
+  2048
+ ],
+ "prefer": {
+  "maplewood": [
+   "autumn",
+   "forest"
+  ],
+  "frostpeak": [
+   "snow",
+   "tundra"
+  ],
+  "azure-harbor": [
+   "reef",
+   "meadow",
+   "savanna"
+  ]
+ },
+ "spots": [
+  {
+   "lat": 0.827,
+   "lon": -1.6894,
+   "land": "meadow"
+  },
+  {
+   "lat": 0.6499,
+   "lon": -2.1853,
+   "land": "autumn"
+  },
+  {
+   "lat": 1.0395,
+   "lon": -2.327,
+   "land": "snow"
+  },
+  {
+   "lat": 0.3949,
+   "lon": -1.3636,
+   "land": "canyon"
+  },
+  {
+   "lat": 0.2178,
+   "lon": -2.6457,
+   "land": "meadow"
+  },
+  {
+   "lat": 0.1293,
+   "lon": -2.0436,
+   "land": "savanna"
+  },
+  {
+   "lat": -0.0584,
+   "lon": -1.2928,
+   "land": "savanna"
+  },
+  {
+   "lat": 1.1104,
+   "lon": -0.5844,
+   "land": "meadow"
+  },
+  {
+   "lat": 1.0147,
+   "lon": -0.0177,
+   "land": "meadow"
+  },
+  {
+   "lat": 1.1635,
+   "lon": 0.9669,
+   "land": "snow"
+  },
+  {
+   "lat": 0.3489,
+   "lon": 0.2479,
+   "land": "forest"
+  },
+  {
+   "lat": 0.5614,
+   "lon": 1.0555,
+   "land": "forest"
+  },
+  {
+   "lat": 0.2178,
+   "lon": 0.9846,
+   "land": "jungle"
+  },
+  {
+   "lat": 0.8376,
+   "lon": 1.1794,
+   "land": "tundra"
+  },
+  {
+   "lat": 1.0147,
+   "lon": 1.4805,
+   "land": "crystal"
+  },
+  {
+   "lat": 0.5791,
+   "lon": 1.8772,
+   "land": "blossom"
+  },
+  {
+   "lat": 1.2591,
+   "lon": 2.0472,
+   "land": "floating"
+  },
+  {
+   "lat": -0.2426,
+   "lon": -2.3447,
+   "land": "savanna"
+  },
+  {
+   "lat": -0.3843,
+   "lon": -2.1499,
+   "land": "savanna"
+  },
+  {
+   "lat": -0.6145,
+   "lon": -2.2916,
+   "land": "forest"
+  },
+  {
+   "lat": -0.1718,
+   "lon": -0.7332,
+   "land": "forest"
+  },
+  {
+   "lat": -0.7916,
+   "lon": -0.6375,
+   "land": "reef"
+  },
+  {
+   "lat": -1.1387,
+   "lon": -0.4144,
+   "land": "volcanic"
+  },
+  {
+   "lat": -1.121,
+   "lon": 0.7721,
+   "land": "tundra"
+  },
+  {
+   "lat": -0.5189,
+   "lon": 1.2042,
+   "land": "meadow"
+  },
+  {
+   "lat": -0.7491,
+   "lon": 2.1074,
+   "land": "mushroom"
+  },
+  {
+   "lat": -0.1718,
+   "lon": 2.2951,
+   "land": "autumn"
+  },
+  {
+   "lat": -0.9616,
+   "lon": 1.2503,
+   "land": "desert"
+  },
+  {
+   "lat": -1.1139,
+   "lon": 1.6753,
+   "land": "tundra"
+  },
+  {
+   "lat": 0.7278,
+   "lon": 0.843,
+   "land": "volcanic"
+  },
+  {
+   "lat": 0.402,
+   "lon": -0.6977,
+   "land": "desert"
+  },
+  {
+   "lat": -0.2178,
+   "lon": -1.5301,
+   "land": "marsh"
+  },
+  {
+   "lat": 1.0927,
+   "lon": -1.0165,
+   "land": "autumn"
+  },
+  {
+   "lat": -0.2709,
+   "lon": 2.5253,
+   "land": "meadow"
+  }
+ ]
+}

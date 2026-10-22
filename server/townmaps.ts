@@ -7,28 +7,35 @@ import path from 'node:path';
 export interface TownMapsOptions {
   /** default process.env.AGENTVILLE_TOWNS ?? ~/.agentville/towns.json */
   file?: string;
+  /** returns a number in [0, 1); default Math.random (tests pass a fixed one) */
+  random?: () => number;
 }
 
 export class TownMaps {
   private file: string;
   private data?: Record<string, string>;
+  private random: () => number;
 
-  /** `maps`: the available map ids, preferred first. */
+  /** `maps`: the available map ids. */
   constructor(readonly maps: string[], opts: TownMapsOptions = {}) {
     this.file = opts.file ?? process.env.AGENTVILLE_TOWNS ?? path.join(os.homedir(), '.agentville', 'towns.json');
+    this.random = opts.random ?? Math.random;
   }
 
   /**
-   * The map for a repo: the one remembered for it, else the first map no other repo in its world
-   * has (`sameWorld` tells which remembered repos share its world), else the least used one.
+   * The map for a repo: the one remembered for it, else a random one among the maps used least in
+   * its world (`sameWorld` tells which remembered repos share it), so a world's towns look different
+   * where they can. The choice is remembered, so a repo keeps its look.
    */
   mapFor(root: string, sameWorld: (otherRoot: string) => boolean): string {
     const data = this.load();
     const known = data[root];
     if (known && this.maps.includes(known)) return known;
-    const used = new Map(this.maps.map((m) => [m, 0]));
-    for (const [r, m] of Object.entries(data)) if (r !== root && used.has(m) && sameWorld(r)) used.set(m, used.get(m)! + 1);
-    const map = this.maps.find((m) => used.get(m) === 0) ?? [...used].sort((a, b) => a[1] - b[1])[0][0];
+    const inWorld = new Map(this.maps.map((m) => [m, 0]));
+    for (const [r, m] of Object.entries(data)) if (r !== root && inWorld.has(m) && sameWorld(r)) inWorld.set(m, inWorld.get(m)! + 1);
+    const least = Math.min(...inWorld.values());
+    const choices = this.maps.filter((m) => inWorld.get(m) === least);
+    const map = choices[Math.min(choices.length - 1, Math.floor(this.random() * choices.length))];
     data[root] = map;
     this.save(data);
     return map;

@@ -35,14 +35,33 @@ export function demoFolders(t: TownData): Record<string, string[]> {
   return out;
 }
 
-/** Pretend towns in two worlds, so the demo has a world map. Folders are filled in from each town's map. */
+/** Pretend towns in worlds of many sizes (1 to 30 repos), so the demo shows world boards of every size and a planet. Folders are filled in from each town's map. */
 export const DEMO_TOWNS: TownInfo[] = [
-  { id: 'demo:acme/api', name: 'api', world: 'Acme', map: 'frostpeak', spot: true, folders: {}, names: {} },
-  { id: 'demo:acme/web', name: 'web', world: 'Acme', map: 'maplewood', spot: true, folders: {}, names: {} },
-  { id: 'demo:acme/docs-site', name: 'docs-site', world: 'Acme', map: 'azure-harbor', spot: true, folders: {}, names: {} },
-  { id: 'demo:acme/admin', name: 'admin', world: 'Acme', map: 'frostpeak', spot: false, folders: {}, names: {} },
-  { id: 'demo:blog/site', name: 'site', world: 'Blog', map: 'frostpeak', spot: true, folders: {}, names: {} },
+  { id: 'demo:acme/api', name: 'api', world: 'Acme', map: 'frostpeak', spot: true, primary: true, folders: {}, names: {} },
+  { id: 'demo:acme/web', name: 'web', world: 'Acme', map: 'maplewood', spot: true, primary: false, folders: {}, names: {} },
+  { id: 'demo:acme/docs-site', name: 'docs-site', world: 'Acme', map: 'azure-harbor', spot: true, primary: false, folders: {}, names: {} },
+  { id: 'demo:acme/admin', name: 'admin', world: 'Acme', map: 'frostpeak', spot: false, primary: false, folders: {}, names: {} },
+  { id: 'demo:blog/site', name: 'site', world: 'Blog', map: 'frostpeak', spot: true, primary: true, folders: {}, names: {} },
+  { id: 'demo:shop/store', name: 'store', world: 'Shop', map: 'azure-harbor', spot: true, primary: true, folders: {}, names: {} },
+  { id: 'demo:notes/wiki', name: 'wiki', world: 'Notes', map: 'maplewood', spot: true, primary: true, folders: {}, names: {} },
+  ...sampleWorld('Duo', ['app', 'api']),
+  ...sampleWorld('Studio', ['site', 'cms', 'api', 'shop', 'emails', 'assets']),
+  ...sampleWorld('Platform', ['gateway', 'auth', 'billing', 'search', 'mobile', 'web', 'admin', 'workers', 'infra', 'analytics', 'docs', 'design']),
+  ...sampleWorld('Enterprise', ['portal', 'identity', 'payments', 'ledger', 'orders', 'catalog', 'search', 'reviews', 'notifications', 'chat',
+    'reports', 'warehouse', 'shipping', 'returns', 'pricing', 'promotions', 'support', 'analytics', 'ios', 'android']),
+  ...sampleWorld('Megacorp', ['core', 'api', 'web', 'ios', 'android', 'desktop', 'auth', 'sso', 'billing', 'invoices', 'tax', 'payroll', 'crm', 'sales',
+    'marketing', 'email', 'sms', 'push', 'search', 'recs', 'ml', 'data', 'etl', 'lake', 'bi', 'infra', 'ci', 'deploy', 'monitoring', 'docs']),
 ];
+
+/** A sample world: the first repo is its primary town; maps rotate like random picks do (a world uses every map before repeating). */
+function sampleWorld(world: string, repos: string[]): TownInfo[] {
+  const maps = ['frostpeak', 'maplewood', 'azure-harbor'];
+  const shift = [...world].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return repos.map((name, i) => ({
+    id: `demo:${world.toLowerCase()}/${name}`, name, world, map: maps[(i + shift) % 3],
+    spot: i < 3, primary: i === 0, folders: {}, names: {},
+  }));
+}
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
 export class Demo {
