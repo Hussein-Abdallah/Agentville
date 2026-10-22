@@ -4,7 +4,7 @@ import { RobotSprites } from './sprites';
 import { World } from './world';
 import { Demo, DEMO_FOLDERS } from './demo';
 import { connectLive, serviceAvailable } from './live';
-import type { AgentState } from './types';
+import type { AgentState, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 
@@ -26,6 +26,37 @@ async function main() {
   // Live mode when the local service is running; demo mode otherwise (or with ?demo).
   const live = !new URLSearchParams(location.search).has('demo') && (await serviceAvailable());
   let demo: Demo | null = null;
+
+  // Live mode has a town per repo; the page shows one at a time and keeps every robot.
+  const agents = new Map<string, AgentState>();
+  let towns: TownInfo[] = [];
+  let current: string | null = null;
+  let picked = localStorage.getItem('agentville.town');
+  const inView = (a: AgentState) => !a.town || a.town === current;
+  const showTownLabels = () => {
+    const t = towns.find((x) => x.id === current);
+    world.folders = t?.folders ?? {};
+    world.names = t?.names ?? {};
+    $('#town-name').textContent = t ? `${t.world} · ${t.name}` : town.name;
+  };
+  const setTown = (id: string | null, byUser = false) => {
+    if (byUser && id) { picked = id; localStorage.setItem('agentville.town', id); }
+    if (id === current) return;
+    current = id;
+    world.clear();
+    showTownLabels();
+    for (const a of agents.values()) if (inView(a)) world.apply(a, true); // already at their buildings
+    render();
+  };
+  /** The town you picked, else one where a robot needs you, else the most recently busy one. */
+  const autoTown = () => {
+    if (picked && towns.some((t) => t.id === picked)) return picked;
+    const list = [...agents.values()].filter((a) => a.town).sort((a, b) => (b.lastActive ?? 0) - (a.lastActive ?? 0));
+    return (list.find((a) => a.status === 'waiting') ?? list[0])?.town ?? towns[0]?.id ?? null;
+  };
+  /** Jump to a robot, in whatever town it is. */
+  const goTo = (a: AgentState) => { if (a.town && a.town !== current) setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
+
   if (live) {
     $('#mode').textContent = 'Connecting…';
     $('#t-add').style.display = 'none';
@@ -36,17 +67,26 @@ async function main() {
     const canNotify = () => 'Notification' in window && Notification.permission === 'granted';
     const showAllow = () => { allowBtn.style.display = alertsBtn.dataset.on && 'Notification' in window && Notification.permission === 'default' ? '' : 'none'; };
     const conn = connectLive(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`, {
-      apply: (s) => world.apply(s),
-      remove: (id) => world.remove(id),
+      apply: (s) => {
+        agents.set(s.id, s);
+        if (current === null && towns.length) setTown(autoTown()); // on connect, the towns list (after the robots) picks
+        if (inView(s)) world.apply(s);
+        else if (world.robots.has(s.id)) world.remove(s.id); // it left for another town: walks off to the station
+      },
+      remove: (id) => { agents.delete(id); world.remove(id); },
       log,
-      folders: (f, names) => { world.folders = f; world.names = names; },
+      towns: (list) => {
+        towns = list;
+        if (!towns.some((t) => t.id === current)) setTown(autoTown());
+        else showTownLabels();
+      },
       alerts: (on) => { alertsBtn.classList.toggle('on', on); alertsBtn.dataset.on = on ? '1' : ''; showAllow(); },
       needs: (st, project) => {
         if (!canNotify()) return;
         const where = [project, st.title].filter(Boolean).join(' · ');
         // silent: the service plays the sound; the tag merges copies from several open pages
         const n = new Notification(`${st.name} needs you`, { body: (st.task ?? 'Waiting for you') + (where ? `\n${where}` : ''), tag: `agentville-${st.id}`, silent: true });
-        n.onclick = () => { window.focus(); world.focus(st.id); n.close(); };
+        n.onclick = () => { window.focus(); goTo(agents.get(st.id) ?? st); n.close(); };
       },
       status: (ok) => { $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off'); },
     });
@@ -100,7 +140,8 @@ async function main() {
     if (selected && !list.some((a) => a.id === selected)) selected = null; // it left town
     for (const r of world.robots.values()) r.selected = r.state.id === selected;
     $('#agents').querySelectorAll<HTMLElement>('.card').forEach((el) => el.classList.toggle('sel', el.dataset.id === selected));
-    const d = selected ? details(world.robots.get(selected)!.state, list, world) : '';
+    const sel = selected ? world.robots.get(selected)!.state : null;
+    const d = sel ? details(sel, list, world, towns.find((t) => t.id === sel.town)) : '';
     if (d !== lastDetails) {
       lastDetails = d;
       $('#details').innerHTML = d;
@@ -108,9 +149,31 @@ async function main() {
       $('#details').querySelector<HTMLElement>('.x')?.addEventListener('click', () => { selected = null; render(); });
       $('#details').querySelectorAll<HTMLElement>('[data-id]').forEach((el) => (el.onclick = () => select(el.dataset.id!)));
     }
-    const waiting = list.filter((a) => a.status === 'waiting').length;
-    $('#needs').textContent = waiting ? `${waiting} need${waiting === 1 ? 's' : ''} you` : '';
+    // needs-you across every town; click to jump to the first one
+    const all = live ? [...agents.values()] : list;
+    const waiting = all.filter((a) => a.status === 'waiting');
+    $('#needs').textContent = waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : '';
+    $('#needs').onclick = waiting.length ? () => goTo(waiting[0]) : null;
+    renderPicker();
   };
+
+  // town picker: towns grouped by world, with robot and needs-you counts
+  const pick = $<HTMLSelectElement>('#town-pick');
+  let lastPick = '';
+  const renderPicker = () => {
+    if (!live) return;
+    const byWorld = new Map<string, TownInfo[]>();
+    for (const t of towns) (byWorld.get(t.world) ?? byWorld.set(t.world, []).get(t.world)!).push(t);
+    const counts = (id: string) => {
+      const here = [...agents.values()].filter((a) => a.town === id), w = here.filter((a) => a.status === 'waiting').length;
+      return (here.length ? `  ·  ${here.length}` : '') + (w ? `  ·  ${w} need${w === 1 ? 's' : ''} you` : '');
+    };
+    const html = [...byWorld].map(([w, ts]) => `<optgroup label="${esc(w)}">${ts.map((t) =>
+      `<option value="${esc(t.id)}"${t.id === current ? ' selected' : ''}>${esc(t.name)}${counts(t.id)}</option>`).join('')}</optgroup>`).join('');
+    if (html !== lastPick) { lastPick = html; pick.innerHTML = html; }
+    pick.style.display = towns.length ? '' : 'none';
+  };
+  pick.onchange = () => setTown(pick.value, true);
   world.onChange = render;
   setInterval(render, 300);
 
@@ -139,7 +202,7 @@ function card(a: AgentState, world: World, hex: string) {
 }
 
 /** The details panel for one robot. */
-function details(a: AgentState, all: AgentState[], world: World) {
+function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo) {
   const r = world.robots.get(a.id)!;
   const hex = world.sprites.meta.colors[a.color];
   const moving = r.mode === 'walking' || r.mode === 'arriving';
@@ -149,7 +212,8 @@ function details(a: AgentState, all: AgentState[], world: World) {
   const helpers = all.filter((x) => x.parentId === a.id);
   const row = (k: string, v: string) => `<div class="k">${k}</div><div class="v">${v}</div>`;
   const rows = [
-    a.project ? row('Project', esc(a.project)) : '',
+    town ? row('World', esc(town.world)) : '',
+    a.project ? row('Town', esc(a.project)) : '',
     row('Where', esc(building)),
     a.status !== 'idle' && a.task ? row(a.status === 'waiting' ? 'Wants' : 'Doing', esc(a.task)) : '',
     parent ? row('Helper of', `<a data-id="${parent.id}">${esc(parent.name)}</a>`) : '',

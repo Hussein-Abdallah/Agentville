@@ -1,3 +1,7 @@
 node_modules
 dist
 .DS_Store
+# event log (your prompts, paths and commands)
+logs/
+# temporary files
+*.tmp-*

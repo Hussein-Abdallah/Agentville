@@ -1,13 +1,14 @@
-# Agentville app
+# Agentville
 
-Your Claude Code sessions as robots in Frostpeak.
+Your Claude Code sessions as little robots in a cozy town. Each robot walks to the building for the folder it's working in, shows what it's doing in a speech bubble, and waves (with a notification) when it needs you. Everything runs on your Mac.
 
 ## First time
 
 Needs Node.js 18 or newer (`node -v` to check; install from nodejs.org if missing).
 
 ```bash
-cd app
+git clone https://github.com/Hussein-Abdallah/Agentville.git
+cd Agentville
 npm install
 npm run hooks:install     # connects Claude Code to Agentville (once)
 ```
@@ -18,8 +19,9 @@ After updating Agentville, run `npm run hooks:install` again to get any new hook
 
 ## Every day
 
+In the Agentville folder:
+
 ```bash
-cd app
 npm start                 # builds and opens http://localhost:4917
 ```
 
@@ -71,11 +73,25 @@ Put an `agentville.json` at the repo root to pin folders to buildings or rename 
 }
 ```
 
-A name from `names` is shown before the building's folders. Pinned buildings are taken out of the automatic order. Changes apply on the next event, with no restart. Unknown buildings and invalid JSON are reported in the terminal and ignored.
+Add `"world": "Acme"` to put the repo in a world of your choice (see Worlds and towns below). A name from `names` is shown before the building's folders. Pinned buildings are taken out of the automatic order. Changes apply on the next event, with no restart. Unknown buildings and invalid JSON are reported in the terminal and ignored.
+
+## Worlds and towns
+
+Every repo is a **town** with its own folder → building layout, and towns are grouped into **worlds** (projects). The header has a town picker, grouped by world, with how many robots are in each town and how many need you. Pick a town to see it; your choice is remembered. On first open the page shows the town where a robot needs you, else the busiest one. Clicking "needs you" in the header jumps to that robot's town.
+
+- **Moving between towns:** when a session starts working in another repo, its robot goes to that town (edits there move it at once; reads and commands once it has stayed put 12 s). Files outside any repo never move it. Helpers move on their own. Until more town maps exist, every town uses the Frostpeak map.
+- **Worlds, automatically:** Agentville finds your dev folder (the deepest folder holding every repo it knows, including repos you've used Claude Code in before) and each folder directly under it is a world: `~/Dev/Acme/api` and `~/Dev/Acme/clients/web` → world **Acme**, `~/Dev/Blog/site` → **Blog**. Two towns with the same name in a world get their parent folder added (`clients/web`).
+- **Worlds, your way:** `~/.agentville/worlds.json` wins over everything, then a repo's `"world"` in `agentville.json`, then the automatic rule:
+
+  ```json
+  { "root": "~/Dev", "worlds": { "Acme": ["~/Dev/Acme/**", "~/work/acme-infra"] } }
+  ```
+
+  `root` pins the dev folder (useful when your repos are spread across folders). A pattern ending in `/**` matches every repo inside that folder; a plain path matches that repo. Changes apply on the next event.
 
 ## Event log
 
-Every Claude Code event and what Agentville did with it is written to `Agentville/logs/events-YYYY-MM-DD.jsonl` (one line per event; file contents and tool output are left out, long text is cut). Logs are kept 7 days and are git-ignored. Turn logging off with `AGENTVILLE_LOG=0 npm start`.
+Every Claude Code event and what Agentville did with it is written to `logs/events-YYYY-MM-DD.jsonl` in the Agentville folder (one line per event; file contents and tool output are left out, long text is cut). Logs are kept 7 days and are git-ignored. Turn logging off with `AGENTVILLE_LOG=0 npm start`.
 
 ## Getting around the town
 
@@ -97,7 +113,7 @@ When a robot starts waiting for you, you get a notification ("Atlas needs you", 
 
 ## Privacy
 
-Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps robot state in memory. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. The only thing written to disk is the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
+Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps robot state in memory. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. To group repos into worlds it reads, once at start, the first `cwd` line of the newest transcript in each `~/.claude/projects/` folder (nothing else from them). The only thing written to disk is the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
 
 ## Code
 
@@ -106,6 +122,7 @@ Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps 
 | `server/index.ts` | Local service: `POST /events` from hooks, WebSocket `/ws` to the UI, serves the built app |
 | `server/state.ts` | Hook events → robot states (sessions, helpers, buildings, needs-you) |
 | `server/log.ts` | Event log (`logs/`) |
+| `server/worlds.ts` | Groups towns (repos) into worlds: automatic by folder, `~/.agentville/worlds.json` overrides |
 | `server/notify.ts` | Needs-you alerts: macOS notification + sound |
 | `server/friendly.ts` | Friendly bubble text from tool calls |
 | `server/hooks.ts` | Install/uninstall the hooks in `~/.claude/settings.json` |

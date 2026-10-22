@@ -93,12 +93,13 @@ export class World {
     this.fit();
   }
 
-  /** Add or update an agent. */
-  apply(state: AgentState) {
+  /** Add or update an agent. `instant`: a new robot stands at its building instead of walking in from the station. */
+  apply(state: AgentState, instant = false) {
     const r = this.robots.get(state.id);
     if (r) r.update(state);
     else {
       const nr = new Robot(state, this.town, this.sprites, (r, place) => this.claimSpot(r, place));
+      if (instant) nr.arriveNow();
       this.robots.set(state.id, nr);
       this.robotLayer.addChild(nr.view);
       this.tagLayer.addChild(nr.tag);
@@ -113,6 +114,13 @@ export class World {
     const taken = new Set([...this.robots.values()].filter((r) => r !== me && r.target === place && r.spot >= 0).map((r) => r.spot));
     for (let i = 0; i < n; i++) if (!taken.has(i)) return i;
     return Math.floor(Math.random() * n);
+  }
+
+  /** Remove every robot at once (the page is switching towns). */
+  clear() {
+    for (const r of this.robots.values()) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.tag.destroy({ children: true }); }
+    this.robots.clear();
+    this.onChange?.();
   }
 
   remove(id: string) {

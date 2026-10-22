@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { after } from 'node:test';
 import { Sessions } from '../server/state';
+import { Worlds } from '../server/worlds';
 
 const townFile = new URL('../public/towns/frostpeak/town.json', import.meta.url);
 const town = JSON.parse(fs.readFileSync(townFile, 'utf8'));
@@ -42,10 +43,12 @@ export function gitRepo(name: string, commits: [string, number][]) {
   return d;
 }
 
-/** A Sessions instance plus helpers to send events and look at the robots. */
-export function newTown() {
+/** A Sessions instance plus helpers to send events and look at the robots. Its worlds never read your real files. */
+export function newTown(worlds?: Worlds) {
   const emitted: any[] = [];
-  const s = new Sessions(buildings, ['orange', 'blue', 'green'], (m) => emitted.push(m));
+  const home = tmpDir('home');
+  worlds ??= new Worlds({ configFile: path.join(home, 'no-worlds.json'), claudeDir: path.join(home, '.claude'), home });
+  const s = new Sessions(buildings, ['orange', 'blue', 'green'], (m) => emitted.push(m), worlds);
   const send = (root: string, e: Record<string, unknown>, session = 's1') => s.handle({ session_id: session, cwd: root, ...e } as any) as any;
   return {
     s, emitted, send,
@@ -54,6 +57,7 @@ export function newTown() {
     tool: (root: string, tool_name: string, tool_input: Record<string, unknown> = {}, session = 's1') => send(root, { hook_event_name: 'PreToolUse', tool_name, tool_input }, session),
     robot: (id = 's1') => s.snapshot().find((a) => a.id === id),
     robots: () => s.snapshot().map((a) => `${a.id}=${a.title ?? a.name}@${a.building}`).sort(),
+    town: (root: string) => s.towns().find((x) => x.id === root),
   };
 }
 

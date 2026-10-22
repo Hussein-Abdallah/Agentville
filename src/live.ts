@@ -1,11 +1,11 @@
-import type { AgentState } from './types';
+import type { AgentState, TownInfo } from './types';
 
 type Msg =
-  | { type: 'snapshot'; agents: AgentState[]; log: string[]; folders: Record<string, string[]>; names?: Record<string, string>; alerts?: boolean }
+  | { type: 'snapshot'; agents: AgentState[]; log: string[]; towns: TownInfo[]; alerts?: boolean }
   | { type: 'agent'; state: AgentState }
   | { type: 'remove'; id: string }
   | { type: 'log'; html: string }
-  | { type: 'folders'; folders: Record<string, string[]>; names?: Record<string, string> }
+  | { type: 'towns'; towns: TownInfo[] }
   | { type: 'alerts'; on: boolean }
   | { type: 'needs'; state: AgentState; project: string };
 
@@ -13,8 +13,8 @@ export interface LiveHandlers {
   apply: (s: AgentState) => void;
   remove: (id: string) => void;
   log: (html: string) => void;
-  /** folder names per building, and buildings renamed in agentville.json */
-  folders: (f: Record<string, string[]>, names: Record<string, string>) => void;
+  /** every town (repo) seen, with its world and building labels */
+  towns: (towns: TownInfo[]) => void;
   status: (connected: boolean) => void;
   /** needs-you notifications on/off (shared by every open page) */
   alerts: (on: boolean) => void;
@@ -40,12 +40,12 @@ export function connectLive(url: string, h: LiveHandlers) {
         known = ids;
         m.agents.forEach(h.apply);
         [...m.log].reverse().forEach(h.log);
-        h.folders(m.folders, m.names ?? {});
+        h.towns(m.towns ?? []);
         if (m.alerts !== undefined) h.alerts(m.alerts);
       } else if (m.type === 'agent') { known.add(m.state.id); h.apply(m.state); }
       else if (m.type === 'remove') { known.delete(m.id); h.remove(m.id); }
       else if (m.type === 'log') h.log(m.html);
-      else if (m.type === 'folders') h.folders(m.folders, m.names ?? {});
+      else if (m.type === 'towns') h.towns(m.towns);
       else if (m.type === 'alerts') h.alerts(m.on);
       else if (m.type === 'needs') h.needs(m.state, m.project);
     };

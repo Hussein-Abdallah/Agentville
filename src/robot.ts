@@ -67,6 +67,16 @@ export class Robot {
     if (moved && this.mode !== 'leaving') this.walkTo(next.building);
   }
 
+  /** Already standing at its building (no walk from the station), e.g. when the page switches towns. */
+  arriveNow() {
+    this.path = [];
+    this.at = this.target;
+    const spots = this.town.buildings[this.target]?.spots;
+    [this.x, this.y] = spots?.length && this.spot >= 0 ? spots[this.spot % spots.length] : this.town.buildings[this.target].door;
+    this.mode = 'present';
+    this.alpha = 1;
+  }
+
   leave() {
     this.mode = 'leaving';
     this.walkTo(stationOf(this.town));

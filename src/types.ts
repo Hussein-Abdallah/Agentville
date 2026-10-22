@@ -16,14 +16,29 @@ export interface AgentState {
   title?: string;
   /** set for subagents: the parent session id */
   parentId?: string;
-  /** repo folder name (live mode) */
+  /** town (repo) name (live mode) */
   project?: string;
+  /** town id: the repo root the robot is working in (live mode); its world comes with the towns list */
+  town?: string;
   /** when the session (or subagent) appeared, ms since epoch */
   startedAt?: number;
   /** last Claude Code event for this session, ms since epoch */
   lastActive?: number;
   /** latest actions, newest first (at most 8) */
   recent?: { t: number; text: string }[];
+}
+
+/** A town (one repo) as the service describes it to the page. */
+export interface TownInfo {
+  /** repo root path */
+  id: string;
+  /** display name: the repo folder (with its parent when two towns in a world share a name) */
+  name: string;
+  world: string;
+  /** folder names per building */
+  folders: Record<string, string[]>;
+  /** buildings renamed in agentville.json */
+  names: Record<string, string>;
 }
 
 export interface BuildingDef {

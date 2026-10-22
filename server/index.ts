@@ -1,6 +1,6 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
-//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'folders'|'alerts'|'needs'}; the page sends {type:'alerts', on} and {type:'notify', can}
+//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'}; the page sends {type:'alerts', on} and {type:'notify', can}
 //   GET  /*        -> the built app (dist/)
 import http from 'node:http';
 import fs from 'node:fs';
@@ -20,7 +20,7 @@ const DIST = path.join(APP, 'dist');
 const PUBLIC = path.join(APP, 'public');
 const TOWN = process.env.AGENTVILLE_TOWN ?? 'frostpeak';
 const DEBUG = !!process.env.AGENTVILLE_DEBUG;
-const log = new EventLog(path.resolve(APP, '..', 'logs'));
+const log = new EventLog(path.join(APP, 'logs'));
 const alerts = new Alerts(process.env.AGENTVILLE_ALERTS !== '0');
 
 const town = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', TOWN, 'town.json'), 'utf8'));
@@ -48,10 +48,18 @@ const sessions = new Sessions(buildings, Object.keys(robot.colors), (msg) => {
   if (msg.type === 'remove') alerts.forget(msg.id);
   if (msg.type === 'log') { recent.unshift(msg.html); recent.length = Math.min(recent.length, 20); }
   broadcast(msg);
-  const l = sessions.labels();
-  const k = JSON.stringify(l);
-  if (k !== labelsKey) { labelsKey = k; broadcast({ type: 'folders', ...l }); }
+  sendTowns();
 });
+
+/** The towns list (worlds, building labels) whenever it changes. */
+function sendTowns() {
+  const towns = sessions.towns();
+  const k = JSON.stringify(towns);
+  if (k !== labelsKey) { labelsKey = k; broadcast({ type: 'towns', towns }); }
+}
+
+// learn repos used with Claude before, so worlds are grouped right from the first event
+sessions.worlds.seedFromClaudeHistory((dir) => sessions.repoRoot(dir)).then(sendTowns, () => {});
 
 const MIME: Record<string, string> = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -101,7 +109,7 @@ server.on('upgrade', (req, socket, head) => {
   if (!req.url?.startsWith('/ws') || !localOrigin(req)) return socket.destroy();
   wss.handleUpgrade(req, socket, head, (ws) => {
     clients.add(ws);
-    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), ...sessions.labels(), alerts: alerts.on }));
+    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on }));
     ws.on('message', (data) => {
       try {
         const m = JSON.parse(String(data));

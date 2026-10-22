@@ -1,5 +1,5 @@
 // Event log for debugging and improving Agentville: one JSON line per hook event, with what the
-// service decided. Files: <Agentville>/logs/events-YYYY-MM-DD.jsonl (kept 7 days, git-ignored).
+// service decided. Files: logs/events-YYYY-MM-DD.jsonl in this repo (kept 7 days, git-ignored).
 // Turn off with AGENTVILLE_LOG=0. Everything stays on this Mac.
 import fs from 'node:fs';
 import path from 'node:path';

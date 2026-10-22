@@ -25,7 +25,7 @@ test('busiest folders hold the most prominent buildings, even before they are us
   assert.equal(t.edit(repo, 'web/x.ts').building, folderSlots[1]);
   assert.equal(t.edit(repo, 'old/x').building, folderSlots[4], 'a deleted folder holds nothing');
   assert.equal(t.edit(repo, 'README.md').building, ROOT);
-  assert.deepEqual(t.s.labels().folders, {
+  assert.deepEqual(t.town(repo)!.folders, {
     [ROOT]: ['root files'], [COMMANDS]: ['commands & tools'],
     [folderSlots[2]]: ['docs'], [folderSlots[3]]: ['scripts'], [folderSlots[0]]: ['api'], [folderSlots[1]]: ['web'], [folderSlots[4]]: ['old'],
   });
@@ -53,7 +53,7 @@ test('agentville.json pins folders and renames buildings; reloads when it change
   assert.equal(town.edit(repo, 'api/x.ts').building, 'library', 'pinned by id');
   assert.equal(town.edit(repo, 'docs/x.md').building, MISC, 'pinned by building name');
   assert.equal(town.edit(repo, 'web/x.ts').building, folderSlots[0], 'web moves up: api left the automatic order');
-  assert.deepEqual(town.s.labels().names, { church: 'Backend', observatory: 'Frontend' });
+  assert.deepEqual(town.town(repo)!.names, { church: 'Backend', observatory: 'Frontend' });
   assert.equal(errors.length, 2, 'unknown buildings are reported');
 
   const later = (ms: number) => { const d = new Date(Date.now() + ms); fs.utimesSync(file, d, d); };
@@ -61,16 +61,16 @@ test('agentville.json pins folders and renames buildings; reloads when it change
   later(5000);
   assert.equal(town.edit(repo, 'web/y.ts').building, 'hot-springs', 'edited file is reloaded');
   assert.equal(town.edit(repo, 'api/y.ts').building, folderSlots[0]);
-  assert.deepEqual(town.s.labels().names, {});
+  assert.deepEqual(town.town(repo)!.names, {});
 
   fs.writeFileSync(file, '{ not json');
   later(10000);
   assert.equal(town.edit(repo, 'web/z.ts').building, folderSlots[1], 'broken file is ignored');
 });
 
-test('labels: root files and commands & tools only while a session exists', () => {
-  const t = newTown();
-  assert.deepEqual(t.s.labels().folders, {});
-  t.prompt(tmpDir('labels', { repo: true }));
-  assert.deepEqual(t.s.labels().folders, { [ROOT]: ['root files'], [COMMANDS]: ['commands & tools'] });
+test('a town appears when a robot first works there, labelled root files and commands & tools', () => {
+  const t = newTown(), r = tmpDir('labels', { repo: true });
+  assert.deepEqual(t.s.towns(), []);
+  t.prompt(r);
+  assert.deepEqual(t.town(r)!.folders, { [ROOT]: ['root files'], [COMMANDS]: ['commands & tools'] });
 });

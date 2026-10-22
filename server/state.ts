@@ -3,8 +3,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentState } from '../src/types';
+import type { AgentState, TownInfo } from '../src/types';
 import { activeTodo, friendlyTask, isPlanTool } from './friendly';
+import { Worlds } from './worlds';
 
 export interface HookEvent {
   hook_event_name: string;
@@ -23,7 +24,7 @@ export interface HookEvent {
 
 interface Building { id: string; name?: string; role?: string }
 
-/** One repo's folder → building layout. */
+/** One repo (a town): its folder → building layout. */
 interface Project {
   map: Map<string, string>; // folder -> building, in first-used order
   rank: string[]; // top-level folders, busiest first (git history)
@@ -31,8 +32,8 @@ interface Project {
   configStamp: string; // agentville.json mtime ('' when absent), to reload on change
 }
 
-/** agentville.json at the repo root: pin folders to buildings, rename buildings. */
-interface Config { folders: Record<string, string>; names: Record<string, string> }
+/** agentville.json at the repo root: pin folders to buildings, rename buildings, name the world. */
+interface Config { folders: Record<string, string>; names: Record<string, string>; world?: string }
 
 const NAMES = ['Atlas', 'Byte', 'Cleo', 'Dex', 'Echo', 'Fern', 'Gus', 'Iris', 'Juno', 'Kit', 'Lumen', 'Milo'];
 const STALE_MS = 30 * 60 * 1000;
@@ -45,6 +46,7 @@ const STARTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Permi
 
 interface Session {
   state: AgentState;
+  /** the town (repo root) it's working in now */
   root: string;
   project: string;
   lastSeen: number;
@@ -65,7 +67,7 @@ interface Session {
 interface Pending { toolUseId?: string; type?: string; desc: string; t: number }
 
 /** A subagent's robot: like a session robot, but its events carry the parent's session id plus an agent_id. */
-interface Helper { state: AgentState; session: string; agentType?: string; lastSeen: number; lastMove: number; preWait?: string }
+interface Helper { state: AgentState; session: string; root: string; agentType?: string; lastSeen: number; lastMove: number; preWait?: string }
 
 export type Emit = (msg: { type: 'agent'; state: AgentState } | { type: 'remove'; id: string } | { type: 'log'; html: string }
   | { type: 'needs'; state: AgentState; project: string }) => void;
@@ -85,7 +87,7 @@ export class Sessions {
   /** where work that touches no file happens: shell commands, browser, web */
   private commandsBuilding?: string;
 
-  constructor(buildings: Building[], private colors: string[], private emit: Emit) {
+  constructor(buildings: Building[], private colors: string[], private emit: Emit, readonly worlds = new Worlds()) {
     this.slots = buildings.filter((b) => !b.role).map((b) => b.id);
     this.rootBuilding = buildings.find((b) => b.role === 'root')?.id ?? this.slots[0];
     this.miscBuilding = buildings.find((b) => b.role === 'misc')?.id ?? this.slots[this.slots.length - 1];
@@ -144,7 +146,11 @@ export class Sessions {
         // Edits always move the robot. Quick look-ups (Read/Grep/Glob) and work that touches no file
         // (commands, browser, web → the commands building) only move it if it has stayed put for a
         // while, so a quick command between edits doesn't make it run back and forth.
-        const file = this.buildingFor(s, e);
+        // work in another repo: the robot goes to that town (edits at once, other work once it has stayed put)
+        const town = this.townOf(s.root, e);
+        const settled = Date.now() - s.lastMove > STICKY_MS || st.building === this.plaza;
+        if (town && (isEdit(e.tool_name) || settled)) this.changeTown(s, town);
+        const file = this.buildingFor(s.root, e);
         const b = file ?? (touchesNoFile(e) ? this.commandsBuilding : undefined);
         const sticky = isQuick(e.tool_name) || (!file && st.building !== this.plaza);
         if (b && b !== st.building && (!sticky || Date.now() - s.lastMove > STICKY_MS)) this.moveTo(s, b);
@@ -187,6 +193,29 @@ export class Sessions {
         return;
     }
     return this.settle(st, s, s.project, e, was, before);
+  }
+
+  /** The other town (repo root) a tool call works in, if it isn't `current` and is inside a repo. */
+  private townOf(current: string, e: HookEvent): string | undefined {
+    const p = toolPath(e);
+    if (!p) return;
+    const abs = path.isAbsolute(p) ? p : path.resolve(e.cwd ?? current, p);
+    if (abs === current || abs.startsWith(current + path.sep)) return;
+    const dir = e.tool_name === 'Bash' || !path.extname(abs) ? abs : path.dirname(abs);
+    const root = this.repoRoot(dir);
+    return root && root !== current ? root : undefined;
+  }
+
+  /** A session robot moves to another town. */
+  private changeTown(s: Session, root: string) {
+    const from = s.project;
+    this.visit(root);
+    s.root = root;
+    s.project = this.townName(root);
+    s.lastWork = undefined;
+    s.lastMove = Date.now();
+    Object.assign(s.state, { town: root, project: s.project, building: this.commandsBuilding ?? this.rootBuilding });
+    this.emit({ type: 'log', html: `<b>${s.state.name}</b> went from ${esc(from)} to ${esc(s.project)}` });
   }
 
   /** After an event: needs-you alert, history entry for the details panel, broadcast. */
@@ -234,7 +263,14 @@ export class Sessions {
         if (BOOKKEEPING.test(e.tool_name ?? '')) break;
         st.status = 'working';
         st.task = friendlyTask(e);
-        const file = this.buildingFor(s, e);
+        const town = this.townOf(h.root, e);
+        if (town && (isEdit(e.tool_name) || Date.now() - h.lastMove > STICKY_MS)) {
+          this.visit(town);
+          h.root = town;
+          Object.assign(st, { town, project: this.townName(town), building: this.commandsBuilding ?? this.rootBuilding });
+          h.lastMove = Date.now();
+        }
+        const file = this.buildingFor(h.root, e);
         const b = file ?? (touchesNoFile(e) ? this.commandsBuilding : undefined);
         const sticky = isQuick(e.tool_name) || !file;
         if (b && b !== st.building && (!sticky || Date.now() - h.lastMove > STICKY_MS)) { st.building = b; h.lastMove = Date.now(); }
@@ -254,7 +290,7 @@ export class Sessions {
       default:
         return;
     }
-    return this.settle(st, h, s.project, e, was, before);
+    return this.settle(st, h, st.project ?? s.project, e, was, before);
   }
 
   private moveTo(s: Session, b?: string) {
@@ -267,13 +303,15 @@ export class Sessions {
   private start(e: HookEvent): Session {
     // the folder the session started in: the transcript knows it even if the first event we see
     // (e.g. after the service restarts) comes from a different current folder
-    const root = this.gitRoot(startFolder(e) ?? e.cwd ?? process.cwd());
+    const dir = startFolder(e) ?? e.cwd ?? process.cwd();
+    const root = this.repoRoot(dir) ?? dir; // a folder outside any repo is a town of its own
+    this.visit(root);
     const used = new Set([...this.sessions.values()].map((s) => s.state.color));
     const color = this.colors.find((c) => !used.has(c)) ?? this.colors[this.sessions.size % this.colors.length];
     const name = NAMES[this.nameIdx++ % NAMES.length];
-    const project = path.basename(root);
+    const project = this.townName(root);
     const s: Session = {
-      state: { id: e.session_id, name, color, building: this.plaza ?? this.rootBuilding, status: 'idle', project, startedAt: Date.now() },
+      state: { id: e.session_id, name, color, building: this.plaza ?? this.rootBuilding, status: 'idle', project, town: root, startedAt: Date.now() },
       root, project, lastSeen: Date.now(), lastMove: 0, helpers: new Map(), pending: [], helperSeq: 1, endedAgents: new Set(),
     };
     this.sessions.set(e.session_id, s);
@@ -320,9 +358,9 @@ export class Sessions {
     const desc = this.takePending(s, agentType)?.desc;
     const state: AgentState = {
       id, name: `${s.state.name}·${++s.helperSeq}`, color: s.state.color, building: s.state.building, status: 'working',
-      task: (desc ?? 'Helping out').slice(0, 42), title: desc?.slice(0, 80), parentId: s.state.id, project: s.project, startedAt: Date.now(),
+      task: (desc ?? 'Helping out').slice(0, 42), title: desc?.slice(0, 80), parentId: s.state.id, project: s.project, town: s.root, startedAt: Date.now(),
     };
-    const h: Helper = { state, session: s.state.id, agentType, lastSeen: Date.now(), lastMove: 0 };
+    const h: Helper = { state, session: s.state.id, root: s.root, agentType, lastSeen: Date.now(), lastMove: 0 };
     s.helpers.set(agentId, id);
     this.helpers.set(id, h);
     this.emit({ type: 'log', html: `<b>${s.state.name}</b> started helper <b>${state.name}</b>` });
@@ -353,21 +391,19 @@ export class Sessions {
   }
 
   /** Which building a tool call belongs to: the top-level folder of the file it touches. */
-  private buildingFor(s: Session, e: HookEvent): string | undefined {
+  private buildingFor(root: string, e: HookEvent): string | undefined {
     const i = e.tool_input ?? {};
-    const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined); // MCP tools may send other types
-    let p: string | undefined = str(i.file_path) ?? str(i.notebook_path) ?? str(i.path);
-    if (!p && e.tool_name === 'Bash') p = e.cwd;
+    const p = toolPath(e);
     if (!p) return;
-    const abs = path.isAbsolute(p) ? p : path.resolve(e.cwd ?? s.root, p);
-    const rel = path.relative(s.root, abs);
+    const abs = path.isAbsolute(p) ? p : path.resolve(e.cwd ?? root, p);
+    const rel = path.relative(root, abs);
     if (rel.startsWith('..') || path.isAbsolute(rel)) return; // outside the project: stay put
     const parts = rel.split(path.sep).filter(Boolean);
     const isDir = !path.extname(abs) && (i.path !== undefined || e.tool_name === 'Bash');
     // commands run from the project root don't move the robot; root files go to the root building
     if (parts.length === 0 && e.tool_name === 'Bash') return;
     if (parts.length === 0 || (parts.length === 1 && !isDir)) return this.rootBuilding;
-    return this.assign(s.root, parts[0]);
+    return this.assign(root, parts[0]);
   }
 
   private assign(root: string, folder: string) {
@@ -432,35 +468,50 @@ export class Sessions {
       const id = building(k, 'a name');
       if (id && typeof v === 'string' && v.trim()) config.names[id] = v.trim().slice(0, 40);
     }
+    if (typeof raw?.world === 'string' && raw.world.trim()) config.world = raw.world.trim().slice(0, 40);
     return config;
   }
 
-  /** Building labels for the UI: folder names per building, and renamed buildings. */
-  labels() {
-    const folders: Record<string, string[]> = {};
-    const names: Record<string, string> = {};
-    const add = (b: string, f: string) => (folders[b] ??= []).includes(f) || folders[b].push(f);
-    if (this.sessions.size) add(this.rootBuilding, 'root files');
-    if (this.sessions.size && this.commandsBuilding) add(this.commandsBuilding, 'commands & tools');
-    for (const p of this.projects.values()) {
+  /** Every town seen so far, with its world and building labels (folder names, renamed buildings). */
+  towns(): TownInfo[] {
+    const list = [...this.projects.keys()].map((root) => {
+      const p = this.project(root);
+      const folders: Record<string, string[]> = {};
+      const add = (b: string, f: string) => (folders[b] ??= []).includes(f) || folders[b].push(f);
+      add(this.rootBuilding, 'root files');
+      if (this.commandsBuilding) add(this.commandsBuilding, 'commands & tools');
       for (const [f, b] of p.map) add(b, f);
-      for (const [b, n] of Object.entries(p.config.names)) names[b] ??= n;
-    }
-    return { folders, names };
+      return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), folders, names: { ...p.config.names } };
+    });
+    // two towns in one world with the same folder name: add the parent folder
+    for (const t of list) if (list.some((o) => o !== t && o.world === t.world && path.basename(o.id) === path.basename(t.id)))
+      t.name = `${path.basename(path.dirname(t.id))}/${t.name}`;
+    return list.sort((a, b) => a.world.localeCompare(b.world) || a.name.localeCompare(b.name));
   }
 
-  private gitRoot(dir: string) {
-    const hit = this.gitRoots.get(dir);
-    if (hit) return hit;
-    let d = dir;
+  /** A town comes into being when a robot first works there. */
+  private visit(root: string) {
+    if (this.projects.has(root)) return;
+    this.worlds.addRepo(root);
+    this.project(root);
+  }
+
+  private townName(root: string) {
+    return this.towns().find((t) => t.id === root)?.name ?? path.basename(root);
+  }
+
+  /** The repo root (folder holding .git) that contains dir, or undefined outside any repo. */
+  repoRoot(dir: string): string | undefined {
+    if (this.gitRoots.has(dir)) return this.gitRoots.get(dir) || undefined;
+    let d = dir, found: string | undefined;
     while (true) {
-      if (fs.existsSync(path.join(d, '.git'))) break;
+      if (fs.existsSync(path.join(d, '.git'))) { found = d; break; }
       const up = path.dirname(d);
-      if (up === d) { d = dir; break; }
+      if (up === d) break;
       d = up;
     }
-    this.gitRoots.set(dir, d);
-    return d;
+    this.gitRoots.set(dir, found ?? '');
+    return found;
   }
 }
 
@@ -479,6 +530,15 @@ function gitRank(root: string): string[] {
   const isDir = (f: string) => { try { return fs.statSync(path.join(root, f)).isDirectory(); } catch { return false; } };
   return [...count].filter(([f]) => isDir(f)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([f]) => f);
 }
+
+/** The file or folder a tool call works on (for Bash: its current folder). MCP tools may send other types. */
+function toolPath(e: HookEvent): string | undefined {
+  const i = e.tool_input ?? {};
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  return str(i.file_path) ?? str(i.notebook_path) ?? str(i.path) ?? (e.tool_name === 'Bash' ? str(e.cwd) : undefined);
+}
+
+const isEdit = (t?: string) => t === 'Edit' || t === 'MultiEdit' || t === 'Write' || t === 'NotebookEdit';
 
 /** Tools that don't do work in the town: planning, the app's own UI, loading tools, subagents. */
 const BOOKKEEPING = /^(TodoWrite|ToolSearch|Skill|AskUserQuestion|EnterPlanMode|ExitPlanMode|Task|Agent|SendMessage|ListAgents|Task[A-Z]\w*)$|^mcp__ccd_/;
