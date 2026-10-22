@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agentville</title>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Agentville</h1>
+      <span class="town" id="town-name"></span>
+      <span class="mode" id="mode"></span>
+      <span class="needs" id="needs"></span>
+      <div class="controls">
+        <button id="t-labels">Labels</button>
+        <button id="t-paths">Paths</button>
+        <button id="t-allow" style="display:none" title="Let this page show a notification when a robot needs you">Allow notifications</button>
+        <button id="t-alerts" title="Notification and sound when a robot needs you">Alerts</button>
+        <button id="t-add">+ Agent</button>
+      </div>
+    </header>
+    <div id="stage">
+      <div class="zoom">
+        <button id="z-in" title="Zoom in (+)">+</button>
+        <button id="z-out" title="Zoom out (−)">−</button>
+        <button id="z-fit" title="Whole town (0)">⤢</button>
+      </div>
+    </div>
+    <aside>
+      <div id="details" style="display:none"></div>
+      <h2>Agents</h2>
+      <div id="agents" style="display:flex;flex-direction:column;gap:6px"></div>
+      <h2>Activity</h2>
+      <div id="feed"></div>
+      <div class="note" id="note">Demo mode: agents are simulated. Click a robot with an orange bubble (or its card) to approve it. Click any robot or card to see its details. Start the service (<code>npm start</code>) to see your real Claude Code sessions.</div>
+    </aside>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

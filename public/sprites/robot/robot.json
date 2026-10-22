@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "frame": {
+    "w": 192,
+    "h": 224
+  },
+  "anchor": {
+    "x": 96,
+    "y": 184
+  },
+  "camera": {
+    "elevationDeg": 30
+  },
+  "directions": [
+    "d",
+    "dr",
+    "r",
+    "ur",
+    "u",
+    "ul",
+    "l",
+    "dl"
+  ],
+  "directionYawDeg": {
+    "d": 0,
+    "dr": 45,
+    "r": 90,
+    "ur": 135,
+    "u": 180,
+    "ul": -135,
+    "l": -90,
+    "dl": -45
+  },
+  "directionNote": "Rows in each sheet follow `directions`. Yaw 0 = facing the viewer; +90 = facing screen-right. To pick a row from a screen movement vector (dx,dy): ground = (dx, dy / sin(elevation)); yaw = atan2(ground.x, ground.y); choose the nearest 45 degrees.",
+  "animations": {
+    "walk": {
+      "frames": 12,
+      "fps": 12,
+      "loop": true
+    },
+    "idle": {
+      "frames": 12,
+      "fps": 6,
+      "loop": true
+    },
+    "type": {
+      "frames": 12,
+      "fps": 10,
+      "loop": true
+    },
+    "wave": {
+      "frames": 12,
+      "fps": 10,
+      "loop": true
+    }
+  },
+  "antenna": {
+    "walk": "off",
+    "idle": "off",
+    "type": "fast blink",
+    "wave": "slow blink (needs you)"
+  },
+  "usage": {
+    "walk": "moving between buildings",
+    "idle": "standing / just arrived",
+    "type": "working (tool running)",
+    "wave": "needs you: turn the robot to face the viewer (row d) before waving so the raised arm is visible"
+  },
+  "colors": {
+    "orange": "#ff7300",
+    "blue": "#2f7bff",
+    "green": "#22b357",
+    "purple": "#8a5cf6",
+    "yellow": "#f5b400",
+    "pink": "#ff5fa2",
+    "teal": "#14b8a6",
+    "slate": "#7d8ea6"
+  },
+  "files": "{color}/{animation}.webp"
+}

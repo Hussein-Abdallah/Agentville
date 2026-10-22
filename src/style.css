@@ -1,0 +1,52 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: #0c1022; color: #e8ebfa; font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+#app { display: grid; grid-template-columns: 1fr 290px; grid-template-rows: auto 1fr; height: 100vh; }
+header { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+header .town { color: #9aa3cc; font-size: 13px; }
+header .needs { color: #ffb27a; font-weight: 600; font-size: 13px; }
+header .controls { margin-left: auto; display: flex; gap: 6px; }
+button { background: #1b2140; color: #dfe3f7; border: 1px solid #2c3462; border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+button.on { background: #2f3a78; border-color: #47539a; }
+#stage { position: relative; min-width: 0; min-height: 0; margin: 0 0 14px 14px; border-radius: 14px; overflow: hidden; background: #080b18; }
+#stage canvas { display: block; }
+aside { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 6px; overflow: auto; }
+aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: #8790bb; margin: 6px 0 2px; font-weight: 600; }
+.card { display: flex; gap: 10px; align-items: center; background: #151a35; border: 1px solid #242b52; border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.card:hover { border-color: #4a548c; }
+.card.sub { margin-left: 16px; padding: 6px 10px; }
+.card.wait { border-color: #c2410c; animation: pulse 1.4s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 3px rgba(234, 88, 12, .25); } }
+.dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.mid { flex: 1; min-width: 0; }
+.top { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.where { color: #959ec7; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st { margin-left: auto; font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+.st.work { background: #1d3d31; color: #7ee2b5; }
+.st.walk, .st.idle { background: #222a4d; color: #a8b5ff; }
+.st.wait { background: #4a2a14; color: #ffb27a; }
+.empty { color: #7880a8; font-size: 13px; padding: 8px 2px; }
+#feed { font-size: 12px; color: #aab2d8; display: flex; flex-direction: column; gap: 4px; background: #11152e; border: 1px solid #222a4e; border-radius: 10px; padding: 8px 10px; }
+#feed b { color: #fff; font-weight: 600; }
+.note { font-size: 11.5px; color: #7880a8; line-height: 1.5; }
+@media (max-width: 900px) { #app { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; } #stage { margin: 0 14px; } }
+.mode { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: #222a4d; color: #a8b5ff; }
+.mode.live { background: #1d3d31; color: #7ee2b5; }
+.mode.off { background: #4a2a14; color: #ffb27a; }
+.note code { background: #1b2140; padding: 1px 5px; border-radius: 4px; }
+.ttl { font-weight: 400; color: #8f98c4; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.card.sel { border-color: #8d97d8; background: #1b2147; }
+#details .det { background: #151a35; border: 1px solid #3a4480; border-radius: 12px; padding: 10px 12px; margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
+#details .top button.x { margin-left: 2px; background: none; border: none; color: #8790bb; padding: 0 2px; font-size: 13px; }
+#details .top button.x:hover { color: #fff; }
+#details .title { color: #c3c9ea; font-size: 12.5px; line-height: 1.4; }
+#details .grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 12px; }
+#details .k { color: #7880a8; }
+#details .v { color: #dfe3f7; min-width: 0; overflow-wrap: anywhere; }
+#details a { color: #a8b5ff; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+#details h3 { font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; color: #8790bb; margin: 2px 0 0; font-weight: 600; }
+#details ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #c3c9ea; }
+#details li { display: flex; gap: 8px; min-width: 0; }
+#details li .t { color: #7880a8; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+#stage .zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; gap: 4px; }
+#stage .zoom button { width: 30px; height: 30px; padding: 0; font-size: 16px; line-height: 1; background: rgba(27, 33, 64, .88); }
