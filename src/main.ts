@@ -6,7 +6,7 @@ import { Demo, DEMO_TOWNS, demoFolders } from './demo';
 import { WorldMap, loadWorldArt } from './worldview';
 import { PlanetView } from './planet';
 import { WorldBoard } from './boardview';
-import { connectLive, serviceAvailable } from './live';
+import { connectLive, serviceAvailable, signedIn } from './live';
 import type { AgentState, TownData, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
@@ -25,8 +25,12 @@ async function main() {
     $('#feed').innerHTML = feed.map((f) => `<div>${f}</div>`).join('');
   };
 
-  // Live mode when the local service is running; demo mode otherwise (or with ?demo).
-  const live = !new URLSearchParams(location.search).has('demo') && (await serviceAvailable());
+  // Live mode when the local service is running and this browser has its token; demo mode otherwise (or with ?demo).
+  const running = !new URLSearchParams(location.search).has('demo') && (await serviceAvailable());
+  const live = running && (await signedIn());
+  /** The service runs but this browser isn't signed in: say how, over the (demo) town. */
+  const signInNote = (show: boolean) => { $('#signin').hidden = !show; };
+  if (running && !live) signInNote(true);
   let demo: Demo | null = null;
   /** Go to session: bring a robot's session (terminal, editor, Claude app) to the front; live mode only */
   let goToSession: ((id: string) => void) | null = null;
@@ -87,7 +91,7 @@ async function main() {
   };
   /** Folder labels per demo town, from its own map (loaded first). */
   const demoTowns = async () => {
-    for (const t of DEMO_TOWNS) t.folders = demoFolders(await mapData(t.map));
+    for (const t of DEMO_TOWNS) { const m = await mapData(t.map); t.folders = demoFolders(m); t.land = m.land; }
     return DEMO_TOWNS;
   };
   const removeAgent = (id: string) => { agents.delete(id); world.remove(id); };
@@ -194,7 +198,11 @@ async function main() {
         const a = agents.get(id);
         if (!ok && a) log(`Couldn't open <b>${esc(a.name)}</b>'s session${appOf(a, agents) ? ` in ${esc(appOf(a, agents)!)}` : ''}`);
       },
-      status: (ok) => { $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off'); },
+      status: (ok) => {
+        $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off');
+        // the token was renewed (or the cookie cleared): reconnecting won't help until you sign in again
+        if (ok) signInNote(false); else signedIn().then((yes) => serviceAvailable().then((up) => signInNote(up && !yes)));
+      },
     });
     goToSession = (id) => conn.focus(id);
     alertsBtn.onclick = () => conn.setAlerts(!alertsBtn.dataset.on);

@@ -3,9 +3,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Auth } from './auth';
 
 const PORT = Number(process.env.AGENTVILLE_PORT ?? 4917);
 const URL = `http://127.0.0.1:${PORT}/events`;
+const token = new Auth().token; // the service only takes events that carry it
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // a throwaway "repo" so folders resolve like a real project
@@ -14,7 +16,7 @@ fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
 
 async function send(e: Record<string, unknown>) {
   try {
-    await fetch(URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(e) });
+    await fetch(URL, { method: 'POST', headers: { 'content-type': 'application/json', 'x-agentville-token': token }, body: JSON.stringify(e) });
   } catch {
     console.error(`Couldn't reach Agentville at ${URL}. Start it first with: npm start`);
     process.exit(1);

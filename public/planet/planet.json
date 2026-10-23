@@ -18,6 +18,11 @@
    "reef",
    "meadow",
    "savanna"
+  ],
+  "sunreach-oasis": [
+   "desert",
+   "canyon",
+   "savanna"
   ]
  },
  "spots": [
@@ -190,6 +195,21 @@
    "lat": -0.2709,
    "lon": 2.5253,
    "land": "meadow"
+  },
+  {
+   "lat": 0.632,
+   "lon": -0.856,
+   "land": "desert"
+  },
+  {
+   "lat": 0.6228,
+   "lon": -0.5921,
+   "land": "desert"
+  },
+  {
+   "lat": 0.5553,
+   "lon": -0.3467,
+   "land": "desert"
   }
  ]
 }

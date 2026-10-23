@@ -12,6 +12,7 @@
     "hooks:uninstall": "tsx server/hooks.ts uninstall",
     "hooks:status": "tsx server/hooks.ts status",
     "simulate": "tsx server/simulate.ts",
+    "token": "tsx server/auth.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {

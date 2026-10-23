@@ -49,6 +49,8 @@ const STICKY_MS = 12_000;
 const HELPER_STALE_MS = 10 * 60 * 1000;
 const PENDING_MS = 60_000; // an Agent call's subagent normally starts within seconds
 const ENDED_MS = 10 * 60 * 1000; // late events after SessionEnd are ignored this long
+const MAX_SESSIONS = 100; // robots in town at once; more sessions are ignored until some end
+const MAX_HELPERS = 30; // helper robots per session
 const CONTEXT_MS = 2000; // read the transcript for the context meter at most this often (and always on Stop)
 /** events that may bring a robot into town; others (Stop, PostToolUse…) only update one that exists */
 const STARTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'SubagentStart']);
@@ -146,7 +148,7 @@ export class Sessions {
       // unless the session is resumed; and a stray Stop or PostToolUse doesn't start a robot
       const ended = this.endedSessions.get(e.session_id);
       const resumed = ev === 'SessionStart' || ev === 'UserPromptSubmit';
-      if ((ended && Date.now() - ended < ENDED_MS && !resumed) || !STARTS.has(ev)) return;
+      if ((ended && Date.now() - ended < ENDED_MS && !resumed) || !STARTS.has(ev) || this.sessions.size >= MAX_SESSIONS) return;
       s = this.start(e);
     }
     s.lastSeen = Date.now();
@@ -339,7 +341,7 @@ export class Sessions {
     }
     let h = this.helpers.get(s.helpers.get(agentId) ?? '');
     if (!h) {
-      if (!['SubagentStart', 'PreToolUse', 'PermissionRequest'].includes(ev)) return;
+      if (!['SubagentStart', 'PreToolUse', 'PermissionRequest'].includes(ev) || s.helpers.size >= MAX_HELPERS) return;
       h = this.spawnHelper(s, agentId, typeof e.agent_type === 'string' ? e.agent_type : undefined);
     }
     h.lastSeen = Date.now();

@@ -65,6 +65,16 @@ export function connectLive(url: string, h: LiveHandlers) {
   };
 }
 
+/** Does this browser have Agentville's token (the cookie the sign-in link sets)? */
+export async function signedIn(): Promise<boolean> {
+  try {
+    const r = await fetch('/auth', { cache: 'no-store' });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Is the service reachable? (it serves /health) */
 export async function serviceAvailable(): Promise<boolean> {
   try {

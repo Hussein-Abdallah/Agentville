@@ -92,6 +92,8 @@ export interface TownData {
   id: string;
   name: string;
   season: string;
+  /** its landscape (snow, autumn, reef, desert…), for where its world sits on the planet */
+  land?: string;
   image: string;
   size: [number, number];
   /** robot height in image px at the bottom of the map */

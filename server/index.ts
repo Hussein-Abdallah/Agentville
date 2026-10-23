@@ -13,6 +13,8 @@ import { Sessions, type HookEvent } from './state';
 import { EventLog, summarizeEvent } from './log';
 import { Alerts } from './notify';
 import { focusHost } from './focus';
+import { Auth } from './auth';
+import { MAX_EVENT_BYTES, RateLimit, warnOnce } from './limits';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -23,10 +25,13 @@ const PUBLIC = path.join(APP, 'public');
 const DEBUG = !!process.env.AGENTVILLE_DEBUG;
 const log = new EventLog(path.join(APP, 'logs'));
 const alerts = new Alerts(process.env.AGENTVILLE_ALERTS !== '0');
+const auth = new Auth();
+const rate = new RateLimit();
+const MAX_CLIENTS = 20; // open pages
 
 const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', 'robot.json'), 'utf8'));
 // every town map in public/towns (Frostpeak first: repos get maps in this order of preference)
-const MAP_ORDER = ['frostpeak', 'maplewood', 'azure-harbor'];
+const MAP_ORDER = ['frostpeak', 'maplewood', 'azure-harbor', 'sunreach-oasis'];
 const mapIds = fs.readdirSync(path.join(PUBLIC, 'towns')).filter((d) => fs.existsSync(path.join(PUBLIC, 'towns', d, 'town.json')))
   .sort((a, b) => (MAP_ORDER.indexOf(a) + 1 || 99) - (MAP_ORDER.indexOf(b) + 1 || 99) || a.localeCompare(b));
 const townFiles = Object.fromEntries(mapIds.map((id) => [id, JSON.parse(fs.readFileSync(path.join(PUBLIC, 'towns', id, 'town.json'), 'utf8'))]));
@@ -101,14 +106,29 @@ function localOrigin(req: http.IncomingMessage) {
 const header = (req: http.IncomingMessage, name: string) => { const v = req.headers[name]; return Array.isArray(v) ? v[0] : v; };
 
 const server = http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url?.startsWith('/events')) {
+  const route = (req.url ?? '/').split('?')[0];
+  if (req.method === 'POST' && route === '/events') {
     if (!localOrigin(req)) { res.writeHead(403).end(); return; }
-    let body = '';
-    req.on('data', (c) => { body += c; if (body.length > 2_000_000) req.destroy(); });
+    if (!auth.allows(req)) {
+      warnOnce('token', 'Ignored events without Agentville\'s token. Run npm run hooks:install again so the hooks send it.');
+      res.writeHead(401).end(); req.resume(); return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => { size += c.length; if (size <= MAX_EVENT_BYTES) chunks.push(c); });
     req.on('end', () => {
+      if (size > MAX_EVENT_BYTES) {
+        warnOnce('size', `Ignored an event of ${(size / 1048576).toFixed(1)} MB (the limit is ${MAX_EVENT_BYTES / 1048576} MB).`);
+        return res.writeHead(413).end();
+      }
+      let e: HookEvent;
+      try { e = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return res.writeHead(400).end(); }
+      if (!rate.take(String(e?.session_id ?? ''))) {
+        warnOnce('rate', `Too many events from session ${String(e?.session_id ?? '?').slice(0, 8)}: some are being dropped.`);
+        return res.writeHead(429).end();
+      }
       res.writeHead(204).end(); // answer right away: never slow Claude down
       try {
-        const e: HookEvent = JSON.parse(body);
         // the app the session runs in comes from the hook's headers, never from the event itself
         e.agentville_app = header(req, 'x-agentville-app');
         e.agentville_term = header(req, 'x-agentville-term');
@@ -120,13 +140,21 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.url === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true}'); }
+  if (route === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true}'); }
+  // the page asks whether it's signed in (has the token cookie)
+  if (route === '/auth') { res.writeHead(localOrigin(req) && auth.allows(req) ? 204 : 401).end(); return; }
+  // the sign-in link: keep the token in a cookie, then drop it from the address
+  if (req.method === 'GET' && route === '/' && /[?&]token=/.test(req.url ?? '')) {
+    if (localOrigin(req) && auth.allows(req)) { res.writeHead(302, { 'set-cookie': auth.cookie(), location: '/' }).end(); return; }
+  }
   serveStatic(req, res);
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 }); // the page only sends tiny messages
 server.on('upgrade', (req, socket, head) => {
   if (!req.url?.startsWith('/ws') || !localOrigin(req)) return socket.destroy();
+  if (!auth.allows(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
+  if (clients.size >= MAX_CLIENTS) { socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n'); return; }
   // Go to session runs commands on this Mac, so only a page (a browser sends an Origin) may ask
   const page = !!req.headers.origin;
   let lastFocus = 0;
@@ -165,11 +193,12 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 });
 
 server.listen(PORT, HOST, () => {
-  const url = `http://localhost:${PORT}`;
-  console.log(`Agentville is running at ${url}`);
+  const url = auth.link(PORT);
+  console.log(`Agentville is running at http://localhost:${PORT}`);
+  console.log(`Sign in a browser once with: ${url}  (or run: npm run token -- open)`);
   if (process.platform === 'darwin') console.log(`Needs-you alerts ${alerts.on ? 'on' : 'off'} (switch with the Alerts button; start with AGENTVILLE_ALERTS=0 to begin off)`);
   console.log('Waiting for Claude Code events… (install the hooks once with: npm run hooks:install)');
   if (log.enabled) console.log(`Logging events to ${log.dir} (turn off with AGENTVILLE_LOG=0)`);
   log.write({ event: 'ServiceStart', version: 2, port: PORT, maps: mapIds });
-  if (process.argv.includes('--open')) exec(`${process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'} ${url}`);
+  if (process.argv.includes('--open')) exec(`${process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'} '${url}'`);
 });

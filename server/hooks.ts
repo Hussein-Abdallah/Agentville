@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Auth } from './auth';
 
 const PORT = Number(process.env.AGENTVILLE_PORT ?? 4917);
 const MARK = 'agentville';
@@ -15,8 +16,10 @@ const FILE = path.join(DIR, 'settings.json');
 // Two headers say which app the session runs in (for Go to session): the bundle id macOS gives
 // the app that started Claude Code, and the terminal program.
 const APP = `-H "X-Agentville-App: $__CFBundleIdentifier" -H "X-Agentville-Term: $TERM_PROGRAM"`;
+// Agentville's token comes from a file only your user can read (see auth.ts), so it never sits in settings.json.
+const TOKEN = `-H "@$HOME/.agentville/hook-header"`;
 const command = (extra = '') =>
-  `curl -s -m 1 -X POST -H 'Content-Type: application/json' ${APP}${extra} --data-binary @- http://127.0.0.1:${PORT}/events >/dev/null 2>&1 || true #${MARK}`;
+  `curl -s -m 1 -X POST -H 'Content-Type: application/json' ${TOKEN} ${APP}${extra} --data-binary @- http://127.0.0.1:${PORT}/events >/dev/null 2>&1 || true #${MARK}`;
 const COMMAND = command();
 // At the start of a session and of each request, also Claude Code's terminal (its parent's tty),
 // so Terminal and iTerm can select the right tab. Only then, to keep the other hooks as light as possible.
@@ -66,6 +69,7 @@ function strip(settings: any) {
 }
 
 function install() {
+  new Auth(); // make sure the token exists before the hooks start sending it
   const s = strip(read());
   s.hooks ??= {};
   for (const ev of [...TOOL_EVENTS, ...OTHER_EVENTS]) {

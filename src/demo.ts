@@ -44,6 +44,7 @@ export const DEMO_TOWNS: TownInfo[] = [
   { id: 'demo:blog/site', name: 'site', world: 'Blog', map: 'frostpeak', spot: true, primary: true, folders: {}, names: {} },
   { id: 'demo:shop/store', name: 'store', world: 'Shop', map: 'azure-harbor', spot: true, primary: true, folders: {}, names: {} },
   { id: 'demo:notes/wiki', name: 'wiki', world: 'Notes', map: 'maplewood', spot: true, primary: true, folders: {}, names: {} },
+  { id: 'demo:dunes/game', name: 'game', world: 'Dunes', map: 'sunreach-oasis', spot: true, primary: true, folders: {}, names: {} },
   ...sampleWorld('Duo', ['app', 'api']),
   ...sampleWorld('Studio', ['site', 'cms', 'api', 'shop', 'emails', 'assets']),
   ...sampleWorld('Platform', ['gateway', 'auth', 'billing', 'search', 'mobile', 'web', 'admin', 'workers', 'infra', 'analytics', 'docs', 'design']),
@@ -55,11 +56,11 @@ export const DEMO_TOWNS: TownInfo[] = [
 
 /** A sample world: the first repo is its primary town; maps rotate like random picks do (a world uses every map before repeating). */
 function sampleWorld(world: string, repos: string[]): TownInfo[] {
-  const maps = ['frostpeak', 'maplewood', 'azure-harbor'];
+  const maps = ['frostpeak', 'maplewood', 'azure-harbor', 'sunreach-oasis'];
   const shift = [...world].reduce((a, c) => a + c.charCodeAt(0), 0);
   return repos.map((name, i) => ({
-    id: `demo:${world.toLowerCase()}/${name}`, name, world, map: maps[(i + shift) % 3],
-    spot: i < 3, primary: i === 0, folders: {}, names: {},
+    id: `demo:${world.toLowerCase()}/${name}`, name, world, map: maps[(i + shift) % maps.length],
+    spot: i < maps.length, primary: i === 0, folders: {}, names: {},
   }));
 }
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];

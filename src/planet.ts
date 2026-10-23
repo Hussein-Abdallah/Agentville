@@ -66,6 +66,8 @@ export class PlanetView {
   /** the pointer is over a world: hold the spin so it's easy to click */
   private hovering = false;
   private places = new Map<string, { lat: number; lon: number }>();
+  /** the landscapes each placed world was placed for, so it settles again when they change */
+  private placedFor = new Map<string, string>();
   private art?: PlanetArt | null; // null: no planet.json (placeholder planet, spots from names)
   private marks: HTMLElement;
   private markKey = '';
@@ -200,7 +202,9 @@ export class PlanetView {
   /**
    * Each world settles on a clearing of the picture: a free one in a landscape it fits (best first),
    * else any free one, else it shares one (a little apart). The pick is remembered in the browser,
-   * per picture, so worlds stay put. Without planet.json (placeholder planet), the spot comes from the name.
+   * per picture, so worlds stay put; but when a world's first town changes landscape (it got another
+   * town map), it moves to a free clearing that fits, if there is one. Without planet.json
+   * (placeholder planet), the spot comes from the name.
    */
   private place(worlds: string[], fits: (w: string) => string[]) {
     const spots = this.art?.spots;
@@ -210,8 +214,17 @@ export class PlanetView {
       const taken = new Map<number, number>(); // spot -> worlds on it
       for (const [w, i] of Object.entries(saved)) if (worlds.includes(w) && spots[i]) taken.set(i, (taken.get(i) ?? 0) + 1);
       for (const w of worlds) {
-        if (this.places.has(w)) continue;
+        const want = fits(w);
+        if (this.places.has(w) && this.placedFor.get(w) === want.join()) continue;
+        this.placedFor.set(w, want.join());
         let i = saved[w];
+        const fitting = (k: number) => !want.length || want.includes(spots[k].land);
+        if (spots[i] && !fitting(i) && spots.some((_, k) => fitting(k) && !taken.has(k))) {
+          // its landscape changed and a fitting clearing is free: leave this one
+          if ((taken.get(i) ?? 0) > 1) taken.set(i, taken.get(i)! - 1); else taken.delete(i);
+          delete saved[w];
+          i = -1;
+        }
         if (!spots[i]) {
           const free = spots.map((_, k) => k).filter((k) => !taken.has(k));
           const fit = fits(w).map((land) => free.filter((k) => spots[k].land === land)).find((l) => l.length) ?? [];
