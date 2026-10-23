@@ -85,9 +85,33 @@ export class Demo {
   /** Emits an update, stamping the activity time and history the details panel shows (as the service does). */
   private send(a: AgentState) {
     a.lastActive = Date.now();
+    if (!a.parentId) this.progress(a);
     const text = a.status === 'waiting' ? 'Needs you: approval' : a.status === 'idle' ? 'Finished' : a.task;
     if (text && a.recent?.[0]?.text !== text) a.recent = [{ t: a.lastActive, text }, ...(a.recent ?? [])].slice(0, 8);
     this.emit({ ...a });
+  }
+
+  /**
+   * Pretend context and to-dos: each step fills the context a little (compacting near the top, then
+   * starting over) and ticks off the to-do in progress, with a new list once one is done.
+   */
+  private progress(a: AgentState) {
+    const MAX = 1_000_000;
+    const c = (a.context ??= { used: Math.round(MAX * (0.05 + Math.random() * 0.6)), max: MAX });
+    if (c.compacting) Object.assign(c, { compacting: false, used: 0, compactedAt: Date.now(), compactions: (c.compactions ?? 0) + 1 });
+    else if (c.used / c.max > 0.92) c.compacting = true;
+    else c.used = Math.min(c.max, c.used + Math.round(8000 + Math.random() * 30000) + (c.used ? 0 : 40000));
+    if (a.status !== 'working') return;
+    if (!a.todos || a.todos.every((t) => t.status === 'completed')) {
+      const steps = [...new Set(Object.values(TASKS).flat())].sort(() => Math.random() - 0.5).slice(0, 3 + Math.floor(Math.random() * 3));
+      a.todos = steps.map((t, i) => ({ text: t, status: i ? 'pending' : 'in_progress' }));
+      return;
+    }
+    if (Math.random() < 0.5) return;
+    const cur = a.todos.findIndex((t) => t.status === 'in_progress');
+    if (cur >= 0) a.todos[cur].status = 'completed';
+    const next = a.todos.findIndex((t) => t.status === 'pending');
+    if (next >= 0) a.todos[next].status = 'in_progress';
   }
 
   /** Buildings a robot can work at in a town: those with a demo folder. */

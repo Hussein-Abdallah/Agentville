@@ -56,6 +56,7 @@ export class Robot {
     this.view.cursor = 'pointer';
     this.body.anchor.set(sprites.meta.anchor.x / sprites.meta.frame.w, sprites.meta.anchor.y / sprites.meta.frame.h);
     this.buildTag();
+    this.shownTag = this.tagKey();
     sprites.get(state.color).then((f) => (this.frames = f));
     this.walkTo(state.building);
   }
@@ -161,6 +162,8 @@ export class Robot {
     const px = (this.town.robotHeight / (this.sprites.meta.frame.h * 0.9)) * s;
     this.body.scale.set(px);
     this.shadow.clear().ellipse(0, 0, 20 * s, 7 * s).fill({ color: 0x000000, alpha: 0.28 });
+    const tk = this.tagKey();
+    if (tk !== this.shownTag) { this.shownTag = tk; this.buildTag(); }
     this.tag.scale.set(s);
     // world position under the feet; the world nudges overlapping tags apart afterwards
     this.tag.position.set(this.view.x, this.y + 12 * s);
@@ -182,14 +185,36 @@ export class Robot {
     this.bubble.visible = !!this.bubbleKey;
   }
 
+  /**
+   * The name tag; once the context is half full (or being compacted) a thin bar inside it shows how
+   * full, turning amber and then red, like a backpack filling up.
+   */
   private buildTag() {
+    this.tag.removeChildren().forEach((c) => c.destroy());
     const t = new Text({ text: this.state.name, style: { fontFamily: FONT, fontSize: 11, fontWeight: '600', fill: 0xffffff } });
     t.resolution = 3; t.anchor.set(0.5);
     const w = t.width + 12, h = 17;
     const bg = new Graphics().roundRect(-w / 2, -h / 2, w, h, h / 2).fill({ color: 0x0f1328, alpha: 0.8 });
     this.tag.addChild(bg, t);
+    const c = this.state.context;
+    const f = c && c.max ? Math.min(1, c.used / c.max) : 0;
+    if (c && (f >= 0.5 || c.compacting)) {
+      const bw = w - 12, x = -bw / 2, y = h / 2 - 3.5;
+      const bar = new Graphics().roundRect(x, y, bw, 2, 1).fill({ color: 0xffffff, alpha: 0.18 });
+      if (c.compacting) bar.roundRect(x, y, bw, 2, 1).fill({ color: 0x8fd3ff, alpha: 0.9 });
+      else bar.roundRect(x, y, Math.max(2, bw * f), 2, 1).fill({ color: meterColor(f) });
+      this.tag.addChild(bar);
+    }
     this.tagSize = { w, h };
   }
+
+  /** What the name tag shows, so it's only rebuilt when that changes. */
+  private tagKey() {
+    const c = this.state.context;
+    const f = c && c.max ? Math.min(1, c.used / c.max) : 0;
+    return `${this.state.name}|${c?.compacting ? 'c' : f >= 0.5 ? Math.round(f * 50) : ''}`;
+  }
+  private shownTag = '';
 
   private buildBubble(text: string, urgent: boolean) {
     this.bubble.removeChildren().forEach((c) => c.destroy());
@@ -213,3 +238,6 @@ export class Robot {
     return Math.abs(ix - cx) < 22 * s && iy > top - 10 && iy < this.y + 10;
   }
 }
+
+/** Context meter colour: green, then amber past 60 %, red past 85 %. */
+export const meterColor = (f: number) => (f >= 0.85 ? 0xff6b5e : f >= 0.6 ? 0xffb347 : 0x6fd49a);

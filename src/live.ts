@@ -7,7 +7,8 @@ type Msg =
   | { type: 'log'; html: string }
   | { type: 'towns'; towns: TownInfo[] }
   | { type: 'alerts'; on: boolean }
-  | { type: 'needs'; state: AgentState; project: string };
+  | { type: 'needs'; state: AgentState; project: string }
+  | { type: 'focused'; id: string; ok: boolean };
 
 export interface LiveHandlers {
   apply: (s: AgentState) => void;
@@ -20,6 +21,8 @@ export interface LiveHandlers {
   alerts: (on: boolean) => void;
   /** a robot needs you and this page should show the notification */
   needs: (state: AgentState, project: string) => void;
+  /** Go to session finished: whether the app came to the front */
+  focused: (id: string, ok: boolean) => void;
 }
 
 /** Connects to the local Agentville service and keeps reconnecting if it restarts. Returns a sender for settings. */
@@ -48,6 +51,7 @@ export function connectLive(url: string, h: LiveHandlers) {
       else if (m.type === 'towns') h.towns(m.towns);
       else if (m.type === 'alerts') h.alerts(m.on);
       else if (m.type === 'needs') h.needs(m.state, m.project);
+      else if (m.type === 'focused') h.focused(m.id, m.ok);
     };
     ws.onclose = () => { h.status(false); setTimeout(open, retry); retry = Math.min(retry * 2, 8000); };
   };
@@ -56,6 +60,8 @@ export function connectLive(url: string, h: LiveHandlers) {
     setAlerts: (on: boolean) => send({ type: 'alerts', on }),
     /** whether this page may show notifications (browser permission granted) */
     setNotify: (can: boolean) => { canNotify = can; send({ type: 'notify', can }); },
+    /** bring the robot's session (its terminal, editor or the Claude app) to the front */
+    focus: (id: string) => send({ type: 'focus', id }),
   };
 }
 

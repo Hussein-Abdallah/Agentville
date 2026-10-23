@@ -26,6 +26,32 @@ export interface AgentState {
   lastActive?: number;
   /** latest actions, newest first (at most 8) */
   recent?: { t: number; text: string }[];
+  /** how full the session's context window is (from its transcript); helpers have none */
+  context?: ContextInfo;
+  /** the session's to-do list (TodoWrite, Claude desktop's plan, or Claude Code's task files) */
+  todos?: TodoItem[];
+  /** the app the session runs in ("Terminal", "VS Code", "Claude"…), when the hooks report it; Go to session opens it */
+  app?: string;
+}
+
+export interface ContextInfo {
+  /** tokens in the context after the latest reply (0 right after a compaction, until the next reply) */
+  used: number;
+  /** the model's context window */
+  max: number;
+  /** compacting the conversation right now */
+  compacting?: boolean;
+  /** when the conversation was last compacted, ms since epoch */
+  compactedAt?: number;
+  /** how many times it was compacted while Agentville watched */
+  compactions?: number;
+}
+
+export interface TodoItem {
+  text: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  /** the in-progress wording ("Fixing the login form"), when the list gives one */
+  doing?: string;
 }
 
 /** A town (one repo) as the service describes it to the page. */

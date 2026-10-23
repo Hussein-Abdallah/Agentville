@@ -1,6 +1,7 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
-//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'}; the page sends {type:'alerts', on} and {type:'notify', can}
+//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'};
+//                     the page sends {type:'alerts', on}, {type:'notify', can} and {type:'focus', id} (Go to session)
 //   GET  /*        -> the built app (dist/)
 import http from 'node:http';
 import fs from 'node:fs';
@@ -11,6 +12,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Sessions, type HookEvent } from './state';
 import { EventLog, summarizeEvent } from './log';
 import { Alerts } from './notify';
+import { focusHost } from './focus';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -83,12 +85,20 @@ function serveStatic(req: http.IncomingMessage, res: http.ServerResponse) {
   fs.createReadStream(file).pipe(res);
 }
 
-/** Hooks (curl) send no Origin; browsers do. Only pages served from this machine may talk to the service. */
+const LOCAL = ['localhost', '127.0.0.1', '[::1]'];
+/**
+ * Hooks (curl) send no Origin; browsers do. Only pages served from this machine may talk to the
+ * service, and only under a local host name (a web page can't reach it by DNS rebinding).
+ */
 function localOrigin(req: http.IncomingMessage) {
+  try { if (!LOCAL.includes(new URL(`http://${req.headers.host ?? ''}`).hostname)) return false; } catch { return false; }
   const o = req.headers.origin;
   if (!o) return true;
-  try { return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(o).hostname); } catch { return false; }
+  try { return LOCAL.includes(new URL(o).hostname); } catch { return false; }
 }
+
+/** One header's value as a string. */
+const header = (req: http.IncomingMessage, name: string) => { const v = req.headers[name]; return Array.isArray(v) ? v[0] : v; };
 
 const server = http.createServer((req, res) => {
   if (req.method === 'POST' && req.url?.startsWith('/events')) {
@@ -99,6 +109,10 @@ const server = http.createServer((req, res) => {
       res.writeHead(204).end(); // answer right away: never slow Claude down
       try {
         const e: HookEvent = JSON.parse(body);
+        // the app the session runs in comes from the hook's headers, never from the event itself
+        e.agentville_app = header(req, 'x-agentville-app');
+        e.agentville_term = header(req, 'x-agentville-term');
+        e.agentville_tty = header(req, 'x-agentville-tty');
         if (DEBUG) console.log(e.hook_event_name, e.tool_name ?? '', e.session_id?.slice(0, 8));
         const result = sessions.handle(e);
         log.write({ ...summarizeEvent(e), result: result && 'recent' in result ? { ...result, recent: undefined } : result }); // history would repeat on every line
@@ -113,6 +127,9 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
   if (!req.url?.startsWith('/ws') || !localOrigin(req)) return socket.destroy();
+  // Go to session runs commands on this Mac, so only a page (a browser sends an Origin) may ask
+  const page = !!req.headers.origin;
+  let lastFocus = 0;
   wss.handleUpgrade(req, socket, head, (ws) => {
     clients.add(ws);
     ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on }));
@@ -124,6 +141,13 @@ server.on('upgrade', (req, socket, head) => {
           const n = notifiers.size;
           if (m.can === true) notifiers.add(ws); else notifiers.delete(ws);
           if (notifiers.size !== n) console.log(`Pages that can show notifications: ${notifiers.size}`);
+        }
+        if (m?.type === 'focus' && typeof m.id === 'string' && page && Date.now() - lastFocus > 1000) {
+          lastFocus = Date.now();
+          const target = sessions.hostOf(m.id);
+          const done = (ok: boolean) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ type: 'focused', id: m.id, ok }));
+          if (!target) done(false);
+          else focusHost(target.host, target.folder).then(done, () => done(false));
         }
       } catch { /* ignore */ }
     });

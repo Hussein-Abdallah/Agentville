@@ -48,6 +48,26 @@ aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; co
 #details ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #c3c9ea; }
 #details li { display: flex; gap: 8px; min-width: 0; }
 #details li .t { color: #7880a8; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+/* context meter (cards: thin; details: full) and to-do list */
+.meter { height: 6px; border-radius: 3px; background: #242b52; overflow: hidden; }
+.meter.thin { height: 3px; margin-top: 5px; }
+.meter span { display: block; height: 100%; border-radius: 3px; background: #6fd49a; transition: width .4s; }
+.meter.warn span { background: #ffb347; }
+.meter.high span { background: #ff6b5e; }
+.meter.compact span { background: repeating-linear-gradient(90deg, #8fd3ff 0 8px, #4c8fbf 8px 16px); animation: compacting 0.8s linear infinite; background-size: 32px 100%; }
+@keyframes compacting { to { background-position: 32px 0; } }
+#details .sub { font-size: 11.5px; color: #959ec7; margin-top: -3px; }
+.todo-n { font-size: 10.5px; font-weight: 600; color: #a8b5ff; background: #222a4d; padding: 1px 6px; border-radius: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ttl + .todo-n { margin-left: 0; }
+#details ul.todo li { padding-left: 18px; position: relative; display: block; }
+#details ul.todo li::before { content: ''; position: absolute; left: 0; top: 2px; width: 10px; height: 10px; border: 1.5px solid #5a6398; border-radius: 3px; }
+#details ul.todo li.completed { color: #7880a8; text-decoration: line-through; text-decoration-color: #4a548c; }
+#details ul.todo li.completed::before { background: #3c8f68; border-color: #3c8f68; }
+#details ul.todo li.in_progress { color: #fff; font-weight: 600; }
+#details ul.todo li.in_progress::before { border-color: #7ee2b5; box-shadow: inset 0 0 0 2px #151a35; background: #7ee2b5; }
+#details button.go { align-self: flex-start; background: #24306a; border: 1px solid #3f4c9a; color: #e4e8ff; border-radius: 8px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+#details button.go:hover:not(:disabled) { background: #2f3d85; }
+#details button.go:disabled { opacity: .5; cursor: default; }
 #stage .zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; gap: 4px; }
 #stage .zoom button { width: 30px; height: 30px; padding: 0; font-size: 16px; line-height: 1; background: rgba(27, 33, 64, .88); }
 #town-pick { background: #1b2140; color: #dfe3f7; border: 1px solid #2c3462; border-radius: 8px; padding: 4px 8px; font-size: 13px; max-width: 320px; }

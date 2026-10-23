@@ -12,12 +12,21 @@ const FILE = path.join(DIR, 'settings.json');
 
 // One curl per event: forward Claude Code's JSON to the local service. Short timeout, no output,
 // always succeeds, so it can never block or slow Claude down. The "#agentville" tag marks our entries.
-const COMMAND = `curl -s -m 1 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:${PORT}/events >/dev/null 2>&1 || true #${MARK}`;
+// Two headers say which app the session runs in (for Go to session): the bundle id macOS gives
+// the app that started Claude Code, and the terminal program.
+const APP = `-H "X-Agentville-App: $__CFBundleIdentifier" -H "X-Agentville-Term: $TERM_PROGRAM"`;
+const command = (extra = '') =>
+  `curl -s -m 1 -X POST -H 'Content-Type: application/json' ${APP}${extra} --data-binary @- http://127.0.0.1:${PORT}/events >/dev/null 2>&1 || true #${MARK}`;
+const COMMAND = command();
+// At the start of a session and of each request, also Claude Code's terminal (its parent's tty),
+// so Terminal and iTerm can select the right tab. Only then, to keep the other hooks as light as possible.
+const TTY_COMMAND = command(` -H "X-Agentville-Tty: $(ps -o tty= -p $PPID 2>/dev/null)"`);
+const TTY_EVENTS = ['SessionStart', 'UserPromptSubmit'];
 
 // PostToolUseFailure: a tool call that failed (e.g. a command exiting with an error) ends there, not in PostToolUse.
 const TOOL_EVENTS = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied'];
-// CwdChanged is only logged for now (worlds: a session moving to another repo).
-const OTHER_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'Notification', 'Stop', 'SubagentStart', 'SubagentStop', 'CwdChanged'];
+// CwdChanged is only logged for now (worlds: a session moving to another repo). PreCompact: the context meter.
+const OTHER_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'Notification', 'Stop', 'SubagentStart', 'SubagentStop', 'CwdChanged', 'PreCompact'];
 
 type HookCmd = { type: 'command'; command: string; timeout?: number };
 type Matcher = { matcher?: string; hooks: HookCmd[] };
@@ -60,7 +69,7 @@ function install() {
   const s = strip(read());
   s.hooks ??= {};
   for (const ev of [...TOOL_EVENTS, ...OTHER_EVENTS]) {
-    const entry: Matcher = { hooks: [{ type: 'command', command: COMMAND, timeout: 2 }] };
+    const entry: Matcher = { hooks: [{ type: 'command', command: TTY_EVENTS.includes(ev) ? TTY_COMMAND : COMMAND, timeout: 2 }] };
     if (TOOL_EVENTS.includes(ev)) entry.matcher = '*';
     (s.hooks[ev] ??= []).push(entry);
   }

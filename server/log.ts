@@ -58,6 +58,8 @@ export function summarizeEvent(e: Record<string, any>) {
     agent_id: e.agent_id,
     agent_type: e.agent_type,
     session_title: e.session_title,
-    extra_keys: Object.keys(e).filter((k) => !['hook_event_name', 'session_id', 'cwd', 'transcript_path', 'tool_name', 'tool_input', 'tool_response', 'tool_use_id', 'prompt', 'message', 'notification_type', 'source', 'reason', 'permission_mode', 'agent_id', 'agent_type'].includes(k)),
+    trigger: e.trigger,
+    app: [e.agentville_app, e.agentville_term, e.agentville_tty].filter(Boolean).join(' ') || undefined,
+    extra_keys: Object.keys(e).filter((k) => !['hook_event_name', 'session_id', 'cwd', 'transcript_path', 'tool_name', 'tool_input', 'tool_response', 'tool_use_id', 'prompt', 'message', 'notification_type', 'source', 'reason', 'permission_mode', 'agent_id', 'agent_type', 'trigger', 'agentville_app', 'agentville_term', 'agentville_tty'].includes(k)),
   };
 }

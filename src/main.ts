@@ -28,6 +28,8 @@ async function main() {
   // Live mode when the local service is running; demo mode otherwise (or with ?demo).
   const live = !new URLSearchParams(location.search).has('demo') && (await serviceAvailable());
   let demo: Demo | null = null;
+  /** Go to session: bring a robot's session (terminal, editor, Claude app) to the front; live mode only */
+  let goToSession: ((id: string) => void) | null = null;
 
   // Live mode has a town per repo; the page shows one at a time and keeps every robot.
   const agents = new Map<string, AgentState>();
@@ -181,10 +183,20 @@ async function main() {
         const where = [project, st.title].filter(Boolean).join(' · ');
         // silent: the service plays the sound; the tag merges copies from several open pages
         const n = new Notification(`${st.name} needs you`, { body: (st.task ?? 'Waiting for you') + (where ? `\n${where}` : ''), tag: `agentville-${st.id}`, silent: true });
-        n.onclick = () => { window.focus(); goTo(agents.get(st.id) ?? st); n.close(); };
+        // straight to the session when we know its app (to answer it there); else to this page
+        n.onclick = () => {
+          const a = agents.get(st.id) ?? st;
+          if (appOf(a, agents)) conn.focus(a.id); else window.focus();
+          goTo(a); n.close();
+        };
+      },
+      focused: (id, ok) => {
+        const a = agents.get(id);
+        if (!ok && a) log(`Couldn't open <b>${esc(a.name)}</b>'s session${appOf(a, agents) ? ` in ${esc(appOf(a, agents)!)}` : ''}`);
       },
       status: (ok) => { $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off'); },
     });
+    goToSession = (id) => conn.focus(id);
     alertsBtn.onclick = () => conn.setAlerts(!alertsBtn.dataset.on);
     allowBtn.onclick = async () => { await Notification.requestPermission(); conn.setNotify(canNotify()); showAllow(); };
     conn.setNotify(canNotify());
@@ -222,6 +234,7 @@ async function main() {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'Escape' && view !== 'town') setView(down[view]);
     else if (e.key === 'Escape' && selected) { selected = null; render(); }
+    else if ((e.key === 'g' || e.key === 'G') && selected && goToSession && appOf(agents.get(selected), agents)) goToSession(selected);
     else if (e.key === 'm' || e.key === 'M') setView(up[view]);
     else if (e.key === '+' || e.key === '=') (view === 'planet' ? planet : world).zoomBy(1.4);
     else if (e.key === '-') (view === 'planet' ? planet : world).zoomBy(1 / 1.4);
@@ -240,13 +253,14 @@ async function main() {
     for (const r of world.robots.values()) r.selected = r.state.id === selected;
     $('#agents').querySelectorAll<HTMLElement>('.card').forEach((el) => el.classList.toggle('sel', el.dataset.id === selected));
     const sel = selected ? world.robots.get(selected)!.state : null;
-    const d = sel ? details(sel, list, world, towns.find((t) => t.id === sel.town)) : '';
+    const d = sel ? details(sel, list, world, towns.find((t) => t.id === sel.town), goToSession ? appOf(sel, agents) ?? '' : undefined) : '';
     if (d !== lastDetails) {
       lastDetails = d;
       $('#details').innerHTML = d;
       $('#details').style.display = d ? '' : 'none';
       $('#details').querySelector<HTMLElement>('.x')?.addEventListener('click', () => { selected = null; render(); });
       $('#details').querySelectorAll<HTMLElement>('[data-id]').forEach((el) => (el.onclick = () => select(el.dataset.id!)));
+      $('#details').querySelector<HTMLButtonElement>('.go')?.addEventListener('click', () => { if (selected) goToSession?.(selected); });
     }
     // needs-you across every town; click to jump to the first one
     const all = [...agents.values()];
@@ -308,11 +322,56 @@ function card(a: AgentState, world: World, hex: string) {
   const detail = esc(moving ? `→ ${where}` : a.status === 'waiting' ? `Waiting at ${where}` : `${a.task ? a.task + ' · ' : ''}${where}`);
   return `<div class="card ${a.status === 'waiting' && !moving ? 'wait' : ''} ${a.parentId ? 'sub' : ''}" data-id="${a.id}">
     <span class="dot" style="background:${hex}"></span>
-    <div class="mid" title="${esc(a.title ?? '')}"><div class="top">${a.name}${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}<span class="st ${st[0]}">${st[1]}</span></div><div class="where">${detail}</div></div></div>`;
+    <div class="mid" title="${esc(a.title ?? '')}"><div class="top">${a.name}${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}${todoCount(a)}<span class="st ${st[0]}">${st[1]}</span></div><div class="where">${detail}</div>${meter(a, true)}</div></div>`;
+}
+
+/** "3/7" for a robot with a to-do list. */
+function todoCount(a: AgentState) {
+  if (!a.todos?.length) return '';
+  const done = a.todos.filter((t) => t.status === 'completed').length;
+  return `<span class="todo-n" title="${done} of ${a.todos.length} to-dos done">${done}/${a.todos.length}</span>`;
+}
+
+/** The context meter: a bar (thin on cards) with the level's colour. */
+function meter(a: AgentState, thin = false) {
+  const c = a.context;
+  if (!c?.max) return '';
+  const f = Math.min(1, c.used / c.max);
+  const cls = c.compacting ? 'compact' : f >= 0.85 ? 'high' : f >= 0.6 ? 'warn' : 'ok';
+  const tip = c.compacting ? 'Compacting the conversation' : `Context ${Math.round(f * 100)}% full`;
+  return `<div class="meter${thin ? ' thin' : ''} ${cls}" title="${tip}"><span style="width:${c.compacting ? 100 : Math.max(1, f * 100).toFixed(1)}%"></span></div>`;
+}
+
+/** The app a robot's session runs in (a helper's is its parent's). */
+function appOf(a: AgentState | undefined, all: Map<string, AgentState>): string | undefined {
+  return a ? a.app ?? (a.parentId ? all.get(a.parentId)?.app : undefined) : undefined;
+}
+
+const tokens = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/** The context section of the details panel. */
+function contextSection(a: AgentState) {
+  const c = a.context;
+  if (!c?.max) return '';
+  const f = Math.min(1, c.used / c.max);
+  const line = c.compacting ? 'Compacting the conversation…'
+    : !c.used && c.compactedAt ? `Compacted ${ago(c.compactedAt)}; measured again after the next reply`
+    : `${tokens(c.used)} of ${tokens(c.max)} tokens · ${Math.round(f * 100)}%`;
+  const times = c.compactions ? ` · compacted ${c.compactions === 1 ? 'once' : `${c.compactions} times`}` : '';
+  return `<h3>Context</h3>${meter(a)}<div class="sub">${line}${times}</div>`;
+}
+
+/** The to-do section of the details panel. */
+function todoSection(a: AgentState) {
+  if (!a.todos?.length) return '';
+  const done = a.todos.filter((t) => t.status === 'completed').length;
+  const items = a.todos.map((t) => `<li class="${t.status}">${esc(t.status === 'in_progress' ? t.doing ?? t.text : t.text)}</li>`).join('');
+  return `<h3>To-do · ${done} of ${a.todos.length} done</h3><ul class="todo">${items}</ul>`;
 }
 
 /** The details panel for one robot. */
-function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo) {
+/** `app`: the session's app for the Go to session button ('' when unknown; undefined in demo mode: no button). */
+function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo, app?: string) {
   const r = world.robots.get(a.id)!;
   const hex = world.sprites.meta.colors[a.color];
   const moving = r.mode === 'walking' || r.mode === 'arriving';
@@ -335,7 +394,11 @@ function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo
   return `<div class="det">
     <div class="top"><span class="dot" style="background:${hex}"></span>${esc(a.name)}<span class="st ${st[0]}">${st[1]}</span><button class="x" title="Close (Esc)">✕</button></div>
     ${a.title ? `<div class="title">${esc(a.title)}</div>` : ''}
+    ${app === undefined ? '' : app ? `<button class="go" title="Bring ${a.parentId ? 'its parent' : 'this'} session to the front (G)">Open in ${esc(app)}</button>`
+      : `<button class="go" disabled title="Agentville doesn't know which app this session runs in yet. Run npm run hooks:install again, then send the session a new message.">Go to session</button>`}
     <div class="grid">${rows}</div>
+    ${contextSection(a)}
+    ${todoSection(a)}
     ${recent ? `<h3>Recent</h3><ul>${recent}</ul>` : ''}
   </div>`;
 }

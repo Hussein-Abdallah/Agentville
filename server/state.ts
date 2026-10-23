@@ -1,10 +1,12 @@
 // Turns Claude Code hook events into robot states (AgentState) for the town.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AgentState, TownInfo } from '../src/types';
-import { activeTodo, friendlyTask, isPlanTool } from './friendly';
+import { friendlyTask, isPlanTool } from './friendly';
+import { applyTodos, currentTodo } from './todos';
+import { contextUsage, contextWindow, readHead, safeTranscript, taskFiles } from './transcript';
+import { appName, hostFrom, type Host } from './focus';
 import { Worlds } from './worlds';
 import { TownMaps } from './townmaps';
 
@@ -47,6 +49,7 @@ const STICKY_MS = 12_000;
 const HELPER_STALE_MS = 10 * 60 * 1000;
 const PENDING_MS = 60_000; // an Agent call's subagent normally starts within seconds
 const ENDED_MS = 10 * 60 * 1000; // late events after SessionEnd are ignored this long
+const CONTEXT_MS = 2000; // read the transcript for the context meter at most this often (and always on Stop)
 /** events that may bring a robot into town; others (Stop, PostToolUse…) only update one that exists */
 const STARTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'SubagentStart']);
 
@@ -68,6 +71,16 @@ interface Session {
   helperSeq: number;
   /** subagents that already stopped: late events for them are dropped */
   endedAgents: Set<string>;
+  /** the folder it started in (editors open it for Go to session) */
+  home: string;
+  /** its transcript (inside the Claude folder), for the context meter */
+  transcript?: string;
+  /** when the context was last read from the transcript */
+  readAt: number;
+  /** the app it runs in, as the hooks report it */
+  host: Host;
+  /** status and task before a compaction, to go back to afterwards */
+  preCompact?: { status: AgentState['status']; task?: string };
 }
 
 interface Pending { toolUseId?: string; type?: string; desc: string; t: number }
@@ -137,6 +150,7 @@ export class Sessions {
       s = this.start(e);
     }
     s.lastSeen = Date.now();
+    this.noteHost(s, e);
     // a subagent's own events: they move its helper robot, not the parent
     if (typeof e.agent_id === 'string' && e.agent_id) return this.handleHelper(s, e, e.agent_id);
     const st = s.state;
@@ -145,19 +159,28 @@ export class Sessions {
 
     switch (ev) {
       case 'SessionStart':
+        if (e.source === 'compact') this.compacted(s);
+        break;
+      case 'PreCompact':
+        // the conversation is being summarised to free up context; back to what it was doing afterwards
+        s.preCompact ??= { status: st.status, task: st.task };
+        st.status = 'working';
+        st.task = 'Compacting the conversation';
+        if (st.context) st.context.compacting = true;
         break;
       case 'UserPromptSubmit':
         if (typeof e.session_title === 'string' && e.session_title) st.title = e.session_title.slice(0, 80);
         else if (typeof e.prompt === 'string' && e.prompt && !st.title) st.title = e.prompt.replace(/\s+/g, ' ').slice(0, 80);
-        s.todo = undefined; // new request: forget the previous plan
+        s.todo = undefined; // new request: forget the previous plan's current step
+        if (st.todos?.every((t) => t.status === 'completed')) st.todos = undefined; // and a finished list
         st.status = 'working';
         st.task = s.todo ?? 'Thinking…';
         // back to work: leave the plaza for the last building, or the commands building
         if (st.building === this.L(s.root).plaza) this.moveTo(s, s.lastWork ?? this.L(s.root).commands);
         break;
       case 'PreToolUse': {
-        const todo = activeTodo(e);
-        if (isPlanTool(e.tool_name)) s.todo = todo ?? s.todo;
+        const todos = applyTodos(st.todos, e.tool_name, e.tool_input);
+        if (todos) { st.todos = todos.length ? todos : undefined; s.todo = currentTodo(todos); }
         st.status = 'working';
         st.task = isPlanTool(e.tool_name) ? s.todo ?? 'Planning' : s.todo && !isQuick(e.tool_name) ? s.todo : friendlyTask(e);
         // a command description or action summary stays visible even with an active to-do
@@ -183,6 +206,11 @@ export class Sessions {
         // (not the end of a helper: background subagents keep working after the Agent call returns)
         if (st.status === 'waiting') { st.status = 'working'; }
         if (ev === 'PostToolUseFailure') this.dropPending(s, e);
+        // Claude Code's task tools keep the list in files: read it once the call is done
+        if (/^Task(Create|Update)$/.test(e.tool_name ?? '')) {
+          const tasks = taskFiles(s.state.id);
+          if (tasks) { st.todos = tasks.length ? tasks : undefined; s.todo = currentTodo(tasks); }
+        }
         break;
       case 'PermissionDenied':
         this.dropPending(s, e);
@@ -212,7 +240,46 @@ export class Sessions {
       default:
         return;
     }
+    this.readContext(s, ev);
     return this.settle(st, s, s.project, e, was, before);
+  }
+
+  /** The app the session runs in (sent by the hook as headers) and its transcript. */
+  private noteHost(s: Session, e: HookEvent) {
+    const h = hostFrom(e.agentville_app, e.agentville_term, e.agentville_tty);
+    if (h.bundle || h.term) s.host = { ...h, tty: h.tty ?? s.host.tty };
+    else if (h.tty) s.host.tty = h.tty;
+    s.state.app = appName(s.host);
+    if (!e.agent_id) s.transcript = safeTranscript(e.transcript_path) ?? s.transcript;
+  }
+
+  /** Updates the context meter from the transcript's latest reply (throttled; always after a reply ends). */
+  private readContext(s: Session, ev: string) {
+    if (!s.transcript || !['PostToolUse', 'PostToolUseFailure', 'Stop', 'SessionStart', 'UserPromptSubmit'].includes(ev)) return;
+    const now = Date.now();
+    if (ev !== 'Stop' && ev !== 'SessionStart' && now - s.readAt < CONTEXT_MS) return;
+    s.readAt = now;
+    const u = contextUsage(s.transcript);
+    if (!u) return;
+    const c = s.state.context;
+    // right after a compaction there's no new reply yet: keep the window size we knew
+    const max = u.used ? contextWindow(u.model, u.used) : c?.max ?? contextWindow(undefined, 0);
+    s.state.context = { ...c, used: u.used, max };
+    if (u.used) delete s.state.context.compacting;
+  }
+
+  /** The conversation was compacted (SessionStart with source "compact"): the meter starts over. */
+  private compacted(s: Session) {
+    const st = s.state;
+    const c = st.context;
+    st.context = { used: 0, max: c?.max ?? contextWindow(undefined, 0), compactedAt: Date.now(), compactions: (c?.compactions ?? 0) + 1 };
+    if (s.preCompact) { st.status = s.preCompact.status; st.task = s.preCompact.task; s.preCompact = undefined; }
+  }
+
+  /** Where to send Go to session for a robot (a helper goes to its parent's session). */
+  hostOf(id: string): { host: Host; folder: string; name: string } | undefined {
+    const s = this.sessions.get(this.helpers.get(id)?.session ?? id);
+    return s && { host: { ...s.host }, folder: s.home, name: s.state.name };
   }
 
   /** The other town (repo root) a tool call works in, if it isn't `current` and is inside a repo. */
@@ -335,6 +402,7 @@ export class Sessions {
     const s: Session = {
       state: { id: e.session_id, name, color, building: this.L(root).plaza ?? this.L(root).root, status: 'idle', project, town: root, startedAt: Date.now() },
       root, project, lastSeen: Date.now(), lastMove: 0, helpers: new Map(), pending: [], helperSeq: 1, endedAgents: new Set(),
+      home: dir, readAt: 0, host: {},
     };
     this.sessions.set(e.session_id, s);
     this.emit({ type: 'log', html: `<b>${name}</b> started in ${esc(project)}` });
@@ -602,15 +670,10 @@ const ownWords = (e: HookEvent) => !!(e.tool_input?.description && e.tool_name =
 
 /** Where the session started, from the first "cwd" in its transcript (only files under ~/.claude). */
 function startFolder(e: HookEvent): string | undefined {
-  const t = e.transcript_path;
-  const base = path.resolve(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), '.claude'));
-  if (!t || !t.endsWith('.jsonl') || !path.resolve(t).startsWith(base + path.sep)) return;
+  const t = safeTranscript(e.transcript_path);
+  const head = t && readHead(t, 256 * 1024);
+  const m = head?.match(/"cwd":("(?:[^"\\]|\\.)*")/);
   try {
-    const fd = fs.openSync(t, 'r');
-    const buf = Buffer.alloc(256 * 1024);
-    const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    fs.closeSync(fd);
-    const m = buf.toString('utf8', 0, n).match(/"cwd":("(?:[^"\\]|\\.)*")/);
     const dir = m ? JSON.parse(m[1]) : undefined;
     return typeof dir === 'string' && path.isAbsolute(dir) && fs.existsSync(dir) ? dir : undefined;
   } catch { return; }
