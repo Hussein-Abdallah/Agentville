@@ -1,5 +1,4 @@
 // Turns Claude Code hook events into robot states (AgentState) for the town.
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentState, TownInfo } from '../src/types';
@@ -9,6 +8,7 @@ import { contextUsage, contextWindow, readHead, safeTranscript, taskFiles } from
 import { appName, hostFrom, type Host } from './focus';
 import { Worlds } from './worlds';
 import { TownMaps } from './townmaps';
+import { BuildingStore, type Area } from './buildings';
 
 export interface HookEvent {
   hook_event_name: string;
@@ -30,12 +30,12 @@ interface Building { id: string; name?: string; role?: string }
 /** One town map's buildings by job: folder slots (most prominent first) and the special buildings. */
 interface Layout { slots: string[]; root: string; misc: string; plaza?: string; commands?: string; ids: Map<string, string> }
 
-/** One repo (a town): its folder → building layout. */
+/** One repo (a town): which folder holds which building. */
 interface Project {
   /** the town map it uses (Frostpeak, Maplewood…) */
   townMap: string;
-  map: Map<string, string>; // folder -> building, in first-used order
-  rank: string[]; // top-level folders, busiest first (git history)
+  /** folder ("server", "src/auth") -> its building and when robots last worked in it; remembered in ~/.agentville */
+  areas: Map<string, Area>;
   config: Config;
   configStamp: string; // agentville.json mtime ('' when absent), to reload on change
 }
@@ -51,6 +51,9 @@ const PENDING_MS = 60_000; // an Agent call's subagent normally starts within se
 const ENDED_MS = 10 * 60 * 1000; // late events after SessionEnd are ignored this long
 const MAX_SESSIONS = 100; // robots in town at once; more sessions are ignored until some end
 const MAX_HELPERS = 30; // helper robots per session
+const MAX_DEPTH = 2; // a building's folder is at most two levels deep ("src/auth")
+/** folders that never hold a building's worth of work themselves (skipped when deciding depth) */
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target', 'vendor', '__pycache__']);
 const CONTEXT_MS = 2000; // read the transcript for the context meter at most this often (and always on Stop)
 /** events that may bring a robot into town; others (Stop, PostToolUse…) only update one that exists */
 const STARTS = new Set(['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'SubagentStart']);
@@ -109,7 +112,7 @@ export class Sessions {
    * `townMaps` remembers which. Buildings in robot states are ids in their own town's map.
    */
   constructor(private maps: Record<string, Building[]>, private colors: string[], private emit: Emit,
-    readonly worlds = new Worlds(), private townMaps = new TownMaps(Object.keys(maps))) {
+    readonly worlds = new Worlds(), private townMaps = new TownMaps(Object.keys(maps)), private store = new BuildingStore()) {
     setInterval(() => this.sweep(), 60_000).unref();
   }
 
@@ -195,7 +198,8 @@ export class Sessions {
         const settled = Date.now() - s.lastMove > STICKY_MS || st.building === this.L(s.root).plaza;
         if (town && (isEdit(e.tool_name) || settled)) this.changeTown(s, town);
         const L = this.L(s.root);
-        const file = this.buildingFor(s.root, e);
+        // a folder without a building claims one on an edit, or once the robot has stayed put a while
+        const file = this.buildingFor(s.root, e, isEdit(e.tool_name) || Date.now() - s.lastMove > STICKY_MS);
         const b = file ?? (touchesNoFile(e) ? L.commands : undefined);
         const sticky = isQuick(e.tool_name) || (!file && st.building !== L.plaza);
         if (b && b !== st.building && (!sticky || Date.now() - s.lastMove > STICKY_MS)) this.moveTo(s, b);
@@ -284,12 +288,13 @@ export class Sessions {
     return s && { host: { ...s.host }, folder: s.home, name: s.state.name };
   }
 
-  /** The other town (repo root) a tool call works in, if it isn't `current` and is inside a repo. */
+  /** The other town (repo root) a tool call works in, if it isn't `current` and is inside a repo (nested repos count). */
   private townOf(current: string, e: HookEvent): string | undefined {
     const p = toolPath(e);
     if (!p) return;
     const abs = path.isAbsolute(p) ? p : path.resolve(e.cwd ?? current, p);
-    if (abs === current || abs.startsWith(current + path.sep)) return;
+    if (abs === current) return;
+    // inside this repo's folder it's still another town if it's in a repo nested in it
     const dir = e.tool_name === 'Bash' || !path.extname(abs) ? abs : path.dirname(abs);
     const root = this.repoRoot(dir);
     return root && root !== current ? root : undefined;
@@ -361,7 +366,7 @@ export class Sessions {
           Object.assign(st, { town, project: this.townName(town), building: L.commands ?? L.root });
           h.lastMove = Date.now();
         }
-        const file = this.buildingFor(h.root, e);
+        const file = this.buildingFor(h.root, e, isEdit(e.tool_name) || Date.now() - h.lastMove > STICKY_MS);
         const b = file ?? (touchesNoFile(e) ? this.L(h.root).commands : undefined);
         const sticky = isQuick(e.tool_name) || !file;
         if (b && b !== st.building && (!sticky || Date.now() - h.lastMove > STICKY_MS)) { st.building = b; h.lastMove = Date.now(); }
@@ -482,8 +487,12 @@ export class Sessions {
     }
   }
 
-  /** Which building a tool call belongs to: the top-level folder of the file it touches. */
-  private buildingFor(root: string, e: HookEvent): string | undefined {
+  /**
+   * Which building a tool call belongs to: root files go to the root building; otherwise the
+   * building of the folder it works in (see areaOf). A folder without a building only gets one
+   * when `claim` is set (an edit, or the robot has stayed put a while); else undefined.
+   */
+  private buildingFor(root: string, e: HookEvent, claim: boolean): string | undefined {
     const i = e.tool_input ?? {};
     const p = toolPath(e);
     if (!p) return;
@@ -492,39 +501,83 @@ export class Sessions {
     if (rel.startsWith('..') || path.isAbsolute(rel)) return; // outside the project: stay put
     const parts = rel.split(path.sep).filter(Boolean);
     const isDir = !path.extname(abs) && (i.path !== undefined || e.tool_name === 'Bash');
+    // a repo nested inside this one is a town of its own, never one of this town's folders
+    // (the robot goes there once it edits or stays a while; until then it stays put)
+    const owner = this.repoRoot(isDir ? abs : path.dirname(abs));
+    if (owner && owner !== root) return;
     // commands run from the project root don't move the robot; root files go to the root building
     if (parts.length === 0 && e.tool_name === 'Bash') return;
-    if (parts.length === 0 || (parts.length === 1 && !isDir)) return this.L(root).root;
-    return this.assign(root, parts[0]);
-  }
-
-  private assign(root: string, folder: string) {
-    const p = this.project(root);
-    let b = p.map.get(folder);
-    if (!b) {
-      b = p.config.folders[folder] ?? this.pickSlot(p, this.layout(p.townMap), folder);
-      p.map.set(folder, b);
-    }
-    return b;
+    const folder = isDir ? parts : parts.slice(0, -1);
+    if (!folder.length) return this.L(root).root;
+    return this.claim(root, this.areaOf(root, folder), claim);
   }
 
   /**
-   * A building for a folder that isn't pinned in agentville.json. The busiest folders (by git
-   * history) hold the most prominent buildings (town.json order) even before they're used; other
-   * folders take the best free building nobody holds, then the least prominent free one; then misc.
+   * The folder a building stands for: the top-level folder, or one level deeper when the top-level
+   * folder is just a container of folders (like src/ holding auth/, ui/, db/), so the work spreads
+   * over buildings. A folder pinned in agentville.json (at any depth) is always its own.
    */
-  private pickSlot(p: Project, L: Layout, folder: string) {
-    const pinned = new Set(Object.values(p.config.folders));
-    const auto = L.slots.filter((x) => !pinned.has(x));
-    const ranked = p.rank.filter((f) => !(f in p.config.folders)).slice(0, auto.length);
-    const taken = new Set(p.map.values());
-    const free = auto.filter((x) => !taken.has(x));
-    if (!free.length) return L.misc;
-    const own = auto[ranked.indexOf(folder)];
-    if (own && free.includes(own)) return own;
-    const held = new Set(ranked.filter((f) => !p.map.has(f)).map((f) => auto[ranked.indexOf(f)]));
-    return free.find((x) => !held.has(x)) ?? free[free.length - 1];
+  private areaOf(root: string, folder: string[]): string {
+    const p = this.project(root);
+    for (let n = folder.length; n > 0; n--) { const a = folder.slice(0, n).join('/'); if (a in p.config.folders) return a; }
+    let n = 1;
+    while (n < MAX_DEPTH && folder.length > n && this.isContainer(path.join(root, ...folder.slice(0, n)))) n++;
+    return folder.slice(0, n).join('/');
   }
+
+  /** A folder that mostly holds other folders: at least 2 of them, and no more files than folders. */
+  private isContainer(dir: string): boolean {
+    let v = this.containers.get(dir);
+    if (v !== undefined) return v;
+    try {
+      const list = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => !d.name.startsWith('.'));
+      const dirs = list.filter((d) => d.isDirectory() && !SKIP_DIRS.has(d.name)).length;
+      v = dirs >= 2 && list.filter((d) => d.isFile()).length <= dirs;
+    } catch { v = false; }
+    this.containers.set(dir, v);
+    return v;
+  }
+  private containers = new Map<string, boolean>();
+  /** pinned folders robots have worked in (repo root + NUL + folder), so their labels show */
+  private used = new Set<string>();
+
+  /**
+   * A folder's building: pinned in agentville.json, or the one it holds (noting the robot worked
+   * there). With `claim`, a folder without one takes the most prominent free building; when every
+   * building is taken, the one whose folder has been quiet longest (and has no robot at it) is
+   * handed over; if every building has robots at it, the shared (misc) building.
+   */
+  private claim(root: string, area: string, claim: boolean): string | undefined {
+    const p = this.project(root);
+    const pinned = p.config.folders[area];
+    if (pinned) { this.used.add(`${root}\0${area}`); return pinned; }
+    const now = Date.now();
+    const held = p.areas.get(area);
+    if (held) { held.used = now; this.remember(root, p); return held.building; }
+    if (!claim) return;
+    const L = this.layout(p.townMap);
+    const reserved = new Set(Object.values(p.config.folders));
+    const auto = L.slots.filter((b) => !reserved.has(b));
+    const taken = new Set([...p.areas.values()].map((x) => x.building));
+    let building = auto.find((b) => !taken.has(b));
+    if (!building) {
+      const quiet = [...p.areas].filter(([, x]) => auto.includes(x.building) && !this.occupied(root, x.building)).sort((a, b) => a[1].used - b[1].used)[0];
+      if (!quiet) return L.misc;
+      p.areas.delete(quiet[0]);
+      building = quiet[1].building;
+    }
+    p.areas.set(area, { building, used: now });
+    this.remember(root, p);
+    return building;
+  }
+
+  /** A robot (session or helper) is at this building in this town. */
+  private occupied(root: string, building: string) {
+    return [...this.sessions.values()].some((s) => s.root === root && s.state.building === building)
+      || [...this.helpers.values()].some((h) => h.root === root && h.state.building === building);
+  }
+
+  private remember(root: string, p: Project) { this.store.set(root, p.townMap, p.areas); }
 
   /** The layout for a repo; reloads agentville.json (and starts the layout over) when it changes. */
   private project(root: string): Project {
@@ -539,7 +592,13 @@ export class Sessions {
       if (typeof raw?.town === 'string' && !pinned) console.error(`${file}: unknown town map "${raw.town}" (maps: ${Object.keys(this.maps).join(', ')}).`);
       const world = this.worlds.worldOf(root, typeof raw?.world === 'string' ? raw.world : undefined);
       const townMap = pinned ?? this.townMaps.mapFor(root, (other) => this.worldOfRoot(other) === world);
-      p = { townMap, map: new Map(), rank: p?.rank ?? gitRank(root), config: this.readConfig(file, raw, this.layout(townMap)), configStamp: stamp };
+      const config = this.readConfig(file, raw, this.layout(townMap));
+      // the remembered layout (on this map), minus buildings that agentville.json now pins to other folders
+      const pinnedTo = new Set(Object.values(config.folders));
+      const areas = p && p.townMap === townMap ? p.areas : this.store.get(root, townMap);
+      const valid = new Set(this.layout(townMap).slots);
+      for (const [a, x] of areas) if (pinnedTo.has(x.building) || a in config.folders || !valid.has(x.building)) areas.delete(a);
+      p = { townMap, areas, config, configStamp: stamp };
       this.projects.set(root, p);
     }
     return p;
@@ -580,7 +639,8 @@ export class Sessions {
       const L = this.layout(p.townMap);
       add(L.root, 'root files');
       if (L.commands) add(L.commands, 'commands & tools');
-      for (const [f, b] of p.map) add(b, f);
+      for (const [f, b] of Object.entries(p.config.folders)) if (this.used.has(`${root}\0${f}`)) add(b, f);
+      for (const [a, x] of p.areas) add(x.building, a);
       return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), map: p.townMap, spot: false, primary: false,
         land: this.lands[p.townMap], folders, names: { ...p.config.names } };
     });
@@ -622,22 +682,6 @@ export class Sessions {
     this.gitRoots.set(dir, found ?? '');
     return found;
   }
-}
-
-/** Top-level folders of a repo that still exist, busiest first: how many of the last 500 commits touched each. */
-function gitRank(root: string): string[] {
-  let out: string;
-  try {
-    out = execFileSync('git', ['-C', root, '-c', 'core.quotePath=false', 'log', '-n', '500', '--name-only', '--format=%x00'],
-      { encoding: 'utf8', timeout: 3000, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch { return []; } // not a git repo, or git missing: first-used order
-  const count = new Map<string, number>();
-  for (const commit of out.split('\0')) {
-    const folders = new Set(commit.split('\n').filter((l) => l.includes('/')).map((l) => l.slice(0, l.indexOf('/'))));
-    for (const f of folders) count.set(f, (count.get(f) ?? 0) + 1);
-  }
-  const isDir = (f: string) => { try { return fs.statSync(path.join(root, f)).isDirectory(); } catch { return false; } };
-  return [...count].filter(([f]) => isDir(f)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([f]) => f);
 }
 
 /** agentville.json's contents ('' stamp: no file), or undefined when it's missing or not valid JSON. */
