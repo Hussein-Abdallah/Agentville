@@ -37,6 +37,8 @@ export class WorldBoard {
   private fitted = '';
   private drag: { x: number; y: number; px: number; py: number; moved: boolean } | null = null;
   private dragged = false;
+  /** the railway as drawn: town ids, their positions and the lines between them (index pairs) */
+  private net?: { ids: string[]; P: [number, number][]; edges: [number, number][] };
 
   constructor(private el: HTMLElement, private on: BoardEvents) {
     el.innerHTML = `<div class="wb-ground"></div><div class="wm-head"></div>
@@ -119,6 +121,40 @@ export class WorldBoard {
     if (html !== this.keys.towns) { this.keys.towns = html; this.sheet.querySelector('.wb-towns')!.innerHTML = html; }
   }
 
+  /**
+   * A robot went from one town to another: a train in its colour runs along the railway between
+   * them (over the fewest lines), then disappears.
+   */
+  trip(from: string, to: string, color: string) {
+    const n = this.net;
+    if (!n) return;
+    const a = n.ids.indexOf(from), b = n.ids.indexOf(to);
+    if (a < 0 || b < 0 || a === b) return;
+    const prev = new Map<number, number>([[a, -1]]), queue = [a];
+    while (queue.length) {
+      const u = queue.shift()!;
+      if (u === b) break;
+      for (const [x, y] of n.edges) { const v = x === u ? y : y === u ? x : -1; if (v >= 0 && !prev.has(v)) { prev.set(v, u); queue.push(v); } }
+    }
+    if (!prev.has(b)) return;
+    const hops: [number, number][] = [];
+    for (let v = b; v !== a; v = prev.get(v)!) hops.unshift([prev.get(v)!, v]);
+    let d = `M${n.P[a][0]},${n.P[a][1]}`, len = 0;
+    for (const [u, v] of hops) {
+      // the same curve as drawn, whichever way the line was stored
+      const e = n.edges.find(([x, y]) => (x === u && y === v) || (x === v && y === u))!;
+      const [cx, cy] = bendOf(n.P, e[0], e[1]);
+      d += ` Q${cx},${cy} ${n.P[v][0]},${n.P[v][1]}`;
+      len += Math.hypot(n.P[v][0] - n.P[u][0], n.P[v][1] - n.P[u][1]);
+    }
+    const dur = len / 110 + 1.2;
+    const svg = this.sheet.querySelector('svg')!;
+    svg.insertAdjacentHTML('beforeend', `<g class="wb-trip"><circle r="9" fill="${esc(color)}"/><circle r="9" class="wb-trip-ring"/><animateMotion dur="${dur.toFixed(2)}s" begin="indefinite" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.45 0 0.55 1" path="${d}"/></g>`);
+    const g = svg.lastElementChild as SVGGElement;
+    (g.querySelector('animateMotion') as SVGAnimationElement).beginElement();
+    setTimeout(() => g.remove(), (dur + 0.6) * 1000);
+  }
+
   /** Show every town, centred. */
   fit() {
     const pts = [...this.pos.values()];
@@ -162,17 +198,21 @@ export class WorldBoard {
   private drawRails(towns: TownInfo[]) {
     const ids = towns.map((t) => t.id), P = ids.map((id) => this.pos.get(id)!);
     const edges = network(P);
-    const curve = (a: number, b: number) => {
-      const [x1, y1] = P[a], [x2, y2] = P[b], mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
-      const len = Math.hypot(x2 - x1, y2 - y1), bend = ((a * 7 + b * 13) % 2 ? 1 : -1) * 0.12 * len;
-      return `M${x1},${y1} Q${mx + ((y1 - y2) / len) * bend},${my + ((x2 - x1) / len) * bend} ${x2},${y2}`;
-    };
+    this.net = { ids, P, edges };
+    const curve = (a: number, b: number) => { const [cx, cy] = bendOf(P, a, b); return `M${P[a][0]},${P[a][1]} Q${cx},${cy} ${P[b][0]},${P[b][1]}`; };
     const paths = edges.map(([a, b]) => curve(a, b));
     const longest = edges.map((e, i) => [Math.hypot(P[e[0]][0] - P[e[1]][0], P[e[0]][1] - P[e[1]][1]), i]).sort((a, b) => b[0] - a[0]).slice(0, 3);
     const svg = this.sheet.querySelector('svg')!;
     svg.innerHTML = paths.map((p) => `<path d="${p}" class="wb-bed"/><path d="${p}" class="wb-ties"/><path d="${p}" class="wb-rail"/>`).join('')
       + longest.map(([len, i], k) => `<circle r="7" class="wb-train"><animateMotion dur="${(len / 60 + 4).toFixed(1)}s" begin="${k * 1.7}s" repeatCount="indefinite" keyPoints="0;1;0" keyTimes="0;0.5;1" calcMode="linear" path="${paths[i]}"/></circle>`).join('');
   }
+}
+
+/** The control point of the gentle curve drawn for the line from town a to town b (in that order). */
+function bendOf(P: [number, number][], a: number, b: number): [number, number] {
+  const [x1, y1] = P[a], [x2, y2] = P[b], mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const len = Math.hypot(x2 - x1, y2 - y1) || 1, bend = ((a * 7 + b * 13) % 2 ? 1 : -1) * 0.12 * len;
+  return [mx + ((y1 - y2) / len) * bend, my + ((x2 - x1) / len) * bend];
 }
 
 /** Primary town first (it goes in the middle), then the rest by name. */

@@ -74,7 +74,21 @@ aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; co
 #signin code { background: #43260f; padding: 1px 5px; border-radius: 4px; }
 #stage .zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; gap: 4px; }
 #stage .zoom button { width: 30px; height: 30px; padding: 0; font-size: 16px; line-height: 1; background: rgba(27, 33, 64, .88); }
-#town-pick { background: #1b2140; color: #dfe3f7; border: 1px solid #2c3462; border-radius: 8px; padding: 4px 8px; font-size: 13px; max-width: 320px; }
+/* town picker: a search box with an autocomplete list */
+#town-pick { position: relative; }
+.tp-input { background: #1b2140; color: #dfe3f7; border: 1px solid #2c3462; border-radius: 8px; padding: 5px 10px; font-size: 13px; width: 220px; outline: none; }
+.tp-input:focus { border-color: #6b78c9; background: #20274d; }
+.tp-input::placeholder { color: #7880a8; }
+.tp-list { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; width: 300px; max-height: min(60vh, 420px); overflow-y: auto; background: #151a35; border: 1px solid #3a4480; border-radius: 10px; padding: 4px; box-shadow: 0 10px 30px rgba(0, 0, 0, .45); }
+.tp-world { font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; color: #8790bb; padding: 8px 8px 3px; font-weight: 600; }
+.tp-item { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: #dfe3f7; }
+.tp-item.on { background: #2a3366; }
+.tp-item.cur .tp-name { color: #a8b5ff; font-weight: 600; }
+.tp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-name b, .tp-wname b { color: #fff; }
+.tp-wname { color: #7880a8; font-size: 11.5px; white-space: nowrap; }
+.tp-n { font-size: 11px; color: #a8b5ff; background: #222a4d; padding: 1px 6px; border-radius: 20px; font-variant-numeric: tabular-nums; }
+.tp-none { padding: 8px; color: #7880a8; font-size: 12.5px; }
 header .needs { cursor: pointer; }
 
 /* world map: the painted map of a world's towns, over the town view */
@@ -173,6 +187,8 @@ header .needs { cursor: pointer; }
 .wb-ties { stroke: #8b6b4a; stroke-width: 11; stroke-dasharray: 3 9; }
 .wb-rail { stroke: #e6dcc8; stroke-width: 2; opacity: .85; }
 .wb-train { fill: #ffe08a; filter: drop-shadow(0 0 6px #ffb347); }
+.wb-trip { filter: drop-shadow(0 0 7px rgba(255, 255, 255, .75)); }
+.wb-trip-ring { fill: none; stroke: #fff; stroke-width: 3; }
 .wb-town { position: absolute; display: flex; flex-direction: column; align-items: center; cursor: pointer; }
 .wb-pic { border-radius: 50%; background-size: 260%; background-position: 50% 52%; border: 4px solid #e9dfc8;
   box-shadow: 0 0 0 3px rgba(20, 16, 12, .55), 0 10px 24px rgba(0, 0, 0, .55); transition: transform .15s; }

@@ -7,7 +7,8 @@ const TURN_RATE = 9; // how fast the facing angle follows movement (per second)
 const HYSTERESIS = (10 * Math.PI) / 180; // extra angle needed before switching sprite direction
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
-type Mode = 'arriving' | 'walking' | 'present' | 'leaving' | 'gone';
+/** held: waiting unseen on the incoming train; boarding: on the platform, waiting to get on */
+type Mode = 'held' | 'arriving' | 'walking' | 'present' | 'leaving' | 'boarding' | 'gone';
 
 /** One robot on the map: movement, facing, animation, bubble and name tag. */
 export class Robot {
@@ -65,7 +66,7 @@ export class Robot {
   update(next: AgentState) {
     const moved = next.building !== this.state.building;
     this.state = { ...next };
-    if (moved && this.mode !== 'leaving') this.walkTo(next.building);
+    if (moved && (this.mode === 'arriving' || this.mode === 'walking' || this.mode === 'present')) this.walkTo(next.building);
   }
 
   /** Already standing at its building (no walk from the station), e.g. when the page switches towns. */
@@ -78,10 +79,34 @@ export class Robot {
     this.alpha = 1;
   }
 
+  /** Wait unseen for the town's train (or ferry) to bring it in; release() lets it step off. */
+  hold() {
+    const b = this.town.transit?.board;
+    if (!b) return;
+    this.mode = 'held';
+    [this.x, this.y] = b;
+    this.path = [];
+    this.alpha = 0;
+  }
+
+  /** The train is in: step off at the platform and walk to the building. */
+  release() {
+    if (this.mode !== 'held') return;
+    this.mode = 'arriving';
+    this.walkTo(this.state.building);
+  }
+
+  /** Off to the station; with a train, it then waits on the platform (boarding) until board() takes it. */
   leave() {
+    if (this.mode === 'held') { this.mode = 'gone'; return; } // never got off
     this.mode = 'leaving';
     this.walkTo(stationOf(this.town));
+    const b = this.town.transit?.board;
+    if (b) this.path.push(b);
   }
+
+  /** Gets on the train (fades out). */
+  board() { if (this.mode === 'boarding') this.mode = 'gone'; }
 
   /** Join the road network from wherever the robot is now and head to a building. */
   private walkTo(building: string) {
@@ -112,7 +137,7 @@ export class Robot {
   tick(dt: number, clock: number, slotOffset: number) {
     // movement
     let moving = false;
-    if (this.path.length) {
+    if (this.path.length && this.mode !== 'held') {
       const [tx, ty] = this.path[0];
       const dx = tx - this.x, dy = ty - this.y, d = Math.hypot(dx, dy);
       const step = this.town.walkSpeed * this.scaleAt(this.y) * dt;
@@ -126,8 +151,8 @@ export class Robot {
       }
       if (!this.path.length) {
         this.at = this.target;
-        if (this.mode === 'leaving') this.mode = 'gone';
-        else this.mode = 'present';
+        if (this.mode === 'leaving') this.mode = this.town.transit ? 'boarding' : 'gone';
+        else if (this.mode !== 'boarding' && this.mode !== 'gone') this.mode = 'present';
       }
     }
     if (this.mode === 'present' && !moving) {
@@ -140,7 +165,7 @@ export class Robot {
     if (Math.abs(angleDiff(this.yaw, rowCenterYaw(this.row))) > Math.PI / 8 + HYSTERESIS) this.row = rowForYaw(this.yaw);
 
     // fade in at the station, fade out when leaving
-    const targetAlpha = this.mode === 'gone' ? 0 : 1;
+    const targetAlpha = this.mode === 'gone' || this.mode === 'held' ? 0 : 1;
     this.alpha += (targetAlpha - this.alpha) * Math.min(1, 4 * dt);
 
     // animation

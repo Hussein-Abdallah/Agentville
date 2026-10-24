@@ -2,6 +2,7 @@ import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 
 import type { AgentState, TownData } from './types';
 import { RobotSprites } from './sprites';
 import { Robot } from './robot';
+import { Transit } from './transit';
 
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 const SLOTS = [0, -46, 46, -92, 92, -138, 138];
@@ -43,6 +44,8 @@ export class World {
   private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
   private bg = new Sprite();
   private dragged = false;
+  /** the town's train or ferry, if it has one */
+  private transit?: Transit;
 
   constructor(private host: HTMLElement, public town: TownData, public sprites: RobotSprites) {}
 
@@ -93,6 +96,9 @@ export class World {
     this.town = town;
     this.bg.texture = tex;
     this.bg.width = town.size[0]; this.bg.height = town.size[1];
+    this.transit?.view.destroy({ children: true });
+    this.transit = town.transit ? new Transit(town, town.transit) : undefined;
+    if (this.transit) this.robotLayer.addChild(this.transit.view);
     for (const g of this.glows.values()) g.destroy();
     for (const l of this.labels.values()) l.destroy({ children: true });
     this.glows.clear(); this.labels.clear(); this.labelKey.clear();
@@ -114,6 +120,7 @@ export class World {
     else {
       const nr = new Robot(state, this.town, this.sprites, (r, place) => this.claimSpot(r, place));
       if (instant) nr.arriveNow();
+      else if (this.transit) nr.hold(); // comes in on the next train
       this.robots.set(state.id, nr);
       this.robotLayer.addChild(nr.view);
       this.tagLayer.addChild(nr.tag);
@@ -209,7 +216,7 @@ export class World {
 
   private pointerTap(gx: number, gy: number) {
     const [x, y] = this.toImage(gx, gy);
-    const hit = [...this.robots.values()].filter((r) => r.mode !== 'gone' && r.hitTest(x, y)).sort((a, b) => b.y - a.y)[0];
+    const hit = [...this.robots.values()].filter((r) => r.mode !== 'gone' && r.mode !== 'held' && r.hitTest(x, y)).sort((a, b) => b.y - a.y)[0];
     if (hit) this.onRobotClick?.(hit.state.id);
   }
 
@@ -222,6 +229,12 @@ export class World {
       if (r.mode === 'present') (at.get(r.at) ?? at.set(r.at, []).get(r.at)!).push(r);
     }
     for (const list of at.values()) list.sort((a, b) => a.state.id.localeCompare(b.state.id)).forEach((r, i) => (r.slot = i));
+    // the train comes for robots waiting to get on or off; while it's in, they do
+    if (this.transit) {
+      const rs = [...this.robots.values()];
+      this.transit.tick(dt, rs.some((r) => r.mode === 'held' || r.mode === 'boarding'), rs.some((r) => r.mode === 'leaving'));
+      if (this.transit.here) for (const r of rs) { if (r.mode === 'held') r.release(); else r.board(); }
+    }
     for (const [id, r] of this.robots) {
       r.tick(dt, this.clock, SLOTS[r.slot % SLOTS.length]);
       if (r.mode === 'gone' && r.view.alpha < 0.02) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.tag.destroy({ children: true }); this.robots.delete(id); this.onChange?.(); }

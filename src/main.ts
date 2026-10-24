@@ -7,6 +7,7 @@ import { WorldMap, loadWorldArt } from './worldview';
 import { PlanetView } from './planet';
 import { WorldBoard } from './boardview';
 import { connectLive, serviceAvailable, signedIn } from './live';
+import { TownPicker } from './picker';
 import type { AgentState, TownData, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
@@ -84,7 +85,17 @@ async function main() {
   const goTo = async (a: AgentState) => { setView('town'); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
   /** A robot appeared or changed (live service or demo). */
   const applyAgent = (s: AgentState) => {
+    const was = agents.get(s.id)?.town;
     agents.set(s.id, s);
+    // it went to another town of the same world: a train runs between them on the world map
+    if (was && s.town && was !== s.town) {
+      const world = (id: string) => towns.find((t) => t.id === id)?.world;
+      if (world(was) && world(was) === world(s.town)) {
+        const hex = sprites.meta.colors[s.color] ?? '#ffe08a';
+        board.trip(was, s.town, hex);
+        worldMap.trip(was, s.town, hex);
+      }
+    }
     if (current === null && towns.length) setTown(autoTown()); // on connect, the towns list (after the robots) picks
     if (inView(s)) world.apply(s);
     else if (world.robots.has(s.id)) world.remove(s.id); // it left for another town: walks off to the station
@@ -239,7 +250,7 @@ async function main() {
   let last = '';
   let lastDetails = '';
   addEventListener('keydown', (e) => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
     if (e.key === 'Escape' && view !== 'town') setView(down[view]);
     else if (e.key === 'Escape' && selected) { selected = null; render(); }
     else if ((e.key === 'g' || e.key === 'G') && selected && goToSession && appOf(agents.get(selected), agents)) goToSession(selected);
@@ -284,22 +295,9 @@ async function main() {
     });
   };
 
-  // town picker: towns grouped by world, with robot and needs-you counts
-  const pick = $<HTMLSelectElement>('#town-pick');
-  let lastPick = '';
-  const renderPicker = () => {
-    const byWorld = new Map<string, TownInfo[]>();
-    for (const t of towns) (byWorld.get(t.world) ?? byWorld.set(t.world, []).get(t.world)!).push(t);
-    const counts = (id: string) => {
-      const here = [...agents.values()].filter((a) => a.town === id), w = here.filter((a) => a.status === 'waiting').length;
-      return (here.length ? `  ·  ${here.length}` : '') + (w ? `  ·  ${w} need${w === 1 ? 's' : ''} you` : '');
-    };
-    const html = [...byWorld].map(([w, ts]) => `<optgroup label="${esc(w)}">${ts.map((t) =>
-      `<option value="${esc(t.id)}"${t.id === current ? ' selected' : ''}>${esc(t.name)}${counts(t.id)}</option>`).join('')}</optgroup>`).join('');
-    if (html !== lastPick) { lastPick = html; pick.innerHTML = html; }
-    pick.style.display = towns.length ? '' : 'none';
-  };
-  pick.onchange = () => { setTown(pick.value, true); setView('town'); };
+  // town picker: search towns by name or world, grouped by world, with robot and needs-you counts
+  const picker = new TownPicker($('#town-pick'), (id) => { setTown(id, true); setView('town'); });
+  const renderPicker = () => picker.update(towns, [...agents.values()], current);
   world.onChange = render;
   setInterval(render, 300);
 
@@ -325,9 +323,10 @@ async function main() {
 function card(a: AgentState, world: World, hex: string) {
   const r = world.robots.get(a.id)!;
   const moving = r.mode === 'walking' || r.mode === 'arriving';
-  const st = moving ? ['walk', 'Walking'] : a.status === 'waiting' ? ['wait', 'Needs you'] : a.status === 'working' ? ['work', 'Working'] : ['idle', 'Idle'];
+  const train = r.mode === 'held' ? 'Arriving by train' : r.mode === 'boarding' || r.mode === 'leaving' ? 'Taking the train' : '';
+  const st = moving || train ? ['walk', train ? 'Travelling' : 'Walking'] : a.status === 'waiting' ? ['wait', 'Needs you'] : a.status === 'working' ? ['work', 'Working'] : ['idle', 'Idle'];
   const where = world.placeName(a.building, true) || (world.town.buildings[a.building]?.name ?? a.building);
-  const detail = esc(moving ? `→ ${where}` : a.status === 'waiting' ? `Waiting at ${where}` : `${a.task ? a.task + ' · ' : ''}${where}`);
+  const detail = esc(train || (moving ? `→ ${where}` : a.status === 'waiting' ? `Waiting at ${where}` : `${a.task ? a.task + ' · ' : ''}${where}`));
   return `<div class="card ${a.status === 'waiting' && !moving ? 'wait' : ''} ${a.parentId ? 'sub' : ''}" data-id="${a.id}">
     <span class="dot" style="background:${hex}"></span>
     <div class="mid" title="${esc(a.title ?? '')}"><div class="top">${a.name}${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}${todoCount(a)}<span class="st ${st[0]}">${st[1]}</span></div><div class="where">${detail}</div>${meter(a, true)}</div></div>`;

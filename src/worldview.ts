@@ -48,6 +48,8 @@ export class WorldMap {
   private head: HTMLElement;
   private box: HTMLElement;
   private marks: HTMLElement;
+  /** where each town meets the railway (its map's station, or its signpost), image px */
+  private onRail = new Map<string, [number, number]>();
 
   constructor(private el: HTMLElement, private art: WorldMapArt, private on: WorldMapEvents) {
     const [W, H] = art.size;
@@ -110,9 +112,29 @@ export class WorldMap {
     // the rest: signposts in the open stretches of railway between the stations
     const extra = here.filter((t) => !(t.spot && t.map in this.art.towns));
     const at = postSpots(this.art, extra.length);
+    this.onRail = new Map([
+      ...here.filter((t) => t.spot && t.map in this.art.towns).map((t) => [t.id, this.art.towns[t.map].station] as [string, [number, number]]),
+      ...extra.map((t, i) => [t.id, at[i]] as [string, [number, number]]),
+    ]);
     const posts = extra.map((t, i) => mark(t, 'post', at[i], 'Signpost'));
     const marks = spots.join('') + posts.join('');
     if (marks !== this.keys.marks) { this.keys.marks = marks; this.marks.innerHTML = marks; }
+  }
+
+  /** A robot went from one town to another: a train in its colour runs along the painted railway between them. */
+  trip(from: string, to: string, color: string) {
+    const a = this.onRail.get(from), b = this.onRail.get(to);
+    if (!a || !b) return;
+    const rail = this.art.railway, fa = fraction(rail, a), fb = fraction(rail, b);
+    if (Math.abs(fa - fb) < 0.005) return;
+    const pts = Array.from({ length: 41 }, (_, i) => along(rail, fa + ((fb - fa) * i) / 40));
+    const total = pts.slice(1).reduce((n, p, i) => n + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+    const dur = total / 160 + 1.2;
+    const svg = this.box.querySelector('svg.wm-train')!;
+    svg.insertAdjacentHTML('beforeend', `<g class="wb-trip"><circle r="11" fill="${esc(color)}"/><circle r="11" class="wb-trip-ring"/><animateMotion dur="${dur.toFixed(2)}s" begin="indefinite" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.45 0 0.55 1" path="M${pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L')}"/></g>`);
+    const g = svg.lastElementChild as SVGGElement;
+    (g.querySelector('animateMotion') as SVGAnimationElement).beginElement();
+    setTimeout(() => g.remove(), (dur + 0.6) * 1000);
   }
 }
 

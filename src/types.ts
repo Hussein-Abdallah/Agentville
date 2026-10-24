@@ -101,6 +101,8 @@ export interface TownData {
   /** walking speed in image px per second */
   walkSpeed: number;
   buildings: Record<string, BuildingDef>;
+  /** the train (or ferry) that brings robots in and takes them away; towns without one fade robots in and out at the station */
+  transit?: TransitDef;
   /** precomputed road paths between doors, key "a|b" (a before b in building order) */
   paths: Record<string, [number, number][]>;
 }
@@ -111,4 +113,15 @@ export interface RobotMeta {
   directions: string[];
   animations: Record<string, { frames: number; fps: number }>;
   colors: Record<string, string>;
+}
+
+/** A town's train or ferry (image px). */
+export interface TransitDef {
+  kind: 'train' | 'ferry';
+  /** where the front of the train (or the ferry) stops */
+  stop: [number, number];
+  /** where robots step on and off, next to the station door */
+  board: [number, number];
+  /** from the stop out of the picture: the way it comes in and leaves */
+  route: [number, number][];
 }
