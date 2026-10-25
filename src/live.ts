@@ -69,6 +69,8 @@ export function connectLive(url: string, h: LiveHandlers) {
     setNotify: (can: boolean) => { canNotify = can; send({ type: 'notify', can }); },
     /** bring the robot's session (its terminal, editor or the Claude app) to the front */
     focus: (id: string) => send({ type: 'focus', id }),
+    /** give a session's robot your own name */
+    rename: (id: string, name: string) => send({ type: 'rename', id, name }),
   };
 }
 

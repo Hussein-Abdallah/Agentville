@@ -38,8 +38,22 @@ export interface AgentState {
   activity?: ActivityKind;
   /** how the last one ended: a pass/fail flag for a few seconds after `at` */
   result?: { kind: ActivityKind; ok: boolean; at: number };
-  /** commands left running in the background (a dev server…): a lamp on the name tag */
-  background?: ActivityKind[];
+  /** what it left running in the background (a dev server, a helper, a monitor…): a lamp on the name tag */
+  background?: BackgroundTask[];
+  /** what you last asked it, and the end of how Claude answered (plain text) */
+  lastPrompt?: string;
+  lastReply?: string;
+}
+
+/** Something a session left running: a shell command, a helper (subagent) or a monitor. */
+export interface BackgroundTask {
+  /** Claude Code's id for it, when known (to stop the right one) */
+  id?: string;
+  type: 'shell' | 'agent' | 'monitor' | 'other';
+  /** a meaningful command's kind (a dev server…) */
+  kind?: ActivityKind;
+  /** its description or command */
+  text: string;
 }
 
 /** Kinds of meaningful shell commands (town services). */

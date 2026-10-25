@@ -139,6 +139,11 @@ export class Robot {
     return (0.78 + 0.32 * (y / H)) * (this.small ? 0.72 : 1);
   }
 
+  /** Walking, travelling or fading: the town draws at full speed while any robot is. */
+  get busy() {
+    return this.path.length > 0 || (this.mode !== 'present' && this.mode !== 'held') || Math.abs((this.mode === 'held' ? 0 : 1) - this.alpha) > 0.02 || this.highlight > 0;
+  }
+
   tick(dt: number, clock: number, slotOffset: number) {
     // movement
     let moving = false;
@@ -209,7 +214,9 @@ export class Robot {
 
     // speech bubble
     const show = this.mode === 'present' && !moving && (this.state.status === 'waiting' || (this.state.status === 'working' && !!this.state.task));
-    const text = this.state.status === 'waiting' ? 'Needs you' : this.state.task ?? '';
+    // between your prompt and Claude's first step it's thinking: the dots count up
+    const dots = this.state.task === 'Thinking…' ? 1 + (Math.floor(this.badgeClock * 2.5) % 3) : 0;
+    const text = this.state.status === 'waiting' ? 'Needs you' : dots ? 'Thinking' + '.'.repeat(dots) + '\u2008'.repeat(3 - dots) : this.state.task ?? '';
     const key = show ? this.state.status + text : '';
     if (key !== this.bubbleKey) { this.bubbleKey = key; this.buildBubble(show ? text : '', this.state.status === 'waiting'); }
     this.bubble.scale.set(s);

@@ -47,9 +47,9 @@ test('a command left running in the background lights a lamp until it is stopped
   t.prompt(r);
   t.send(r, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'd1', tool_input: { command: 'npm run dev', run_in_background: true } });
   const started = t.send(r, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_use_id: 'd1' });
-  assert.deepEqual(started.background, ['server']);
+  assert.deepEqual(started.background?.map((b: any) => b.kind), ['server']);
   assert.equal(started.result, undefined, 'starting it is not a result');
-  assert.deepEqual(t.send(r, { hook_event_name: 'Stop' }).background, ['server'], 'it keeps running after the turn ends');
+  assert.deepEqual(t.send(r, { hook_event_name: 'Stop' }).background?.map((b: any) => b.kind), ['server'], 'it keeps running after the turn ends');
   t.prompt(r);
   const off = t.send(r, { hook_event_name: 'PreToolUse', tool_name: 'KillShell', tool_input: { shell_id: 'x' } });
   assert.equal(off.background, undefined);

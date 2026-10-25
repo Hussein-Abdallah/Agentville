@@ -211,3 +211,15 @@ export function lastWords(text: unknown): string | undefined {
   const asks = tail.match(/[^.!?]*\?/g)?.map((s) => s.trim()).filter((s) => s.length > 3);
   return clip(asks?.length ? asks.slice(-2).join(' ') : plain[plain.length - 1], 200);
 }
+
+/** A prompt or reply as plain text for the details panel: code blocks become "[code]", markdown marks go, whitespace collapses; at most `max` characters. */
+export function plainText(text: string, max: number): string {
+  const t = text
+    .replace(/```[\s\S]*?```/g, ' [code] ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^#+\s*/gm, '')
+    .replace(/[*_`>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return clip(t, max);
+}

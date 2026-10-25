@@ -2,12 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentState, TownInfo } from '../src/types';
-import { friendlyTask, isPlanTool, lastWords, waitingFor } from './friendly';
+import { friendlyTask, isPlanTool, lastWords, plainText, waitingFor } from './friendly';
+import { SessionStore, type SavedSession } from './sessionstore';
 import { applyTodos, currentTodo } from './todos';
-import { contextUsage, contextWindow, readHead, safeTranscript, taskFiles } from './transcript';
+import { contextUsage, contextWindow, readHead, safeTranscript, sessionLabels, taskFiles } from './transcript';
 import { appName, hostFrom, type Host } from './focus';
 import { RESULT_TEXT, activityOf } from './activity';
-import type { ActivityKind } from '../src/types';
+import type { ActivityKind, BackgroundTask } from '../src/types';
 import { Worlds } from './worlds';
 import { TownMaps } from './townmaps';
 import { BuildingStore, type Area } from './buildings';
@@ -74,6 +75,8 @@ interface Session {
   preWait?: string;
   /** the end of Claude's last reply (Stop), shown when it waits for yours */
   lastSaid?: string;
+  /** you gave it its name */
+  customName?: boolean;
   helpers: Map<string, string>; // subagent id (agent_id in hook events) -> helper robot id
   /** Agent/Task calls whose subagent hasn't shown up yet (oldest first) */
   pending: Pending[];
@@ -95,7 +98,7 @@ interface Session {
 }
 
 /** Town services: meaningful commands running, by tool call id (bg: started in the background). */
-type Running = Map<string, { kind: ActivityKind; bg: boolean }>;
+type Running = Map<string, { kind?: ActivityKind; bg: boolean; text: string }>;
 
 interface Pending { toolUseId?: string; type?: string; desc: string; t: number }
 
@@ -121,7 +124,8 @@ export class Sessions {
    * `townMaps` remembers which. Buildings in robot states are ids in their own town's map.
    */
   constructor(private maps: Record<string, Building[]>, private colors: string[], private emit: Emit,
-    readonly worlds = new Worlds(), private townMaps = new TownMaps(Object.keys(maps)), private store = new BuildingStore()) {
+    readonly worlds = new Worlds(), private townMaps = new TownMaps(Object.keys(maps)), private store = new BuildingStore(),
+    private saved = new SessionStore()) {
     setInterval(() => this.sweep(), 60_000).unref();
   }
 
@@ -160,8 +164,11 @@ export class Sessions {
       // unless the session is resumed; and a stray Stop or PostToolUse doesn't start a robot
       const ended = this.endedSessions.get(e.session_id);
       const resumed = ev === 'SessionStart' || ev === 'UserPromptSubmit';
-      if ((ended && Date.now() - ended < ENDED_MS && !resumed) || !STARTS.has(ev) || this.sessions.size >= MAX_SESSIONS) return;
-      s = this.start(e);
+      // one we knew before a restart comes back on any event, as itself
+      const saved = this.saved.get(e.session_id);
+      const known = !ended && saved && Date.now() - saved.seen < STALE_MS;
+      if ((ended && Date.now() - ended < ENDED_MS && !resumed) || (!STARTS.has(ev) && !known) || this.sessions.size >= MAX_SESSIONS) return;
+      s = this.start(e, saved);
     }
     s.lastSeen = Date.now();
     this.noteHost(s, e);
@@ -185,6 +192,7 @@ export class Sessions {
       case 'UserPromptSubmit':
         if (typeof e.session_title === 'string' && e.session_title) st.title = e.session_title.slice(0, 80);
         else if (typeof e.prompt === 'string' && e.prompt && !st.title) st.title = e.prompt.replace(/\s+/g, ' ').slice(0, 80);
+        if (typeof e.prompt === 'string' && e.prompt.trim()) { st.lastPrompt = plainText(e.prompt, 600); delete st.lastReply; }
         s.todo = undefined; // new request: forget the previous plan's current step
         if (st.todos?.every((t) => t.status === 'completed')) st.todos = undefined; // and a finished list
         st.status = 'working';
@@ -257,7 +265,10 @@ export class Sessions {
         st.status = 'idle';
         st.task = undefined;
         s.lastSaid = lastWords(e.last_assistant_message);
+        if (typeof e.last_assistant_message === 'string') st.lastReply = plainText(e.last_assistant_message, 1200);
         delete st.activity; s.running.clear(); // background commands (st.background) keep running
+        // Claude Code lists what's still running when a turn ends: that's the true background list
+        if (Array.isArray(e.background_tasks)) { const bg = backgroundOf(e.background_tasks); if (bg.length) st.background = bg; else delete st.background; }
         st.building = this.L(s.root).plaza ?? st.building;
         break;
       case 'SubagentStop': // without an agent_id: the oldest helper finished
@@ -268,7 +279,43 @@ export class Sessions {
     }
     this.readContext(s, ev);
     const note = this.service(st, s.running, e);
-    return this.settle(st, s, s.project, e, was, before, note);
+    const out = this.settle(st, s, s.project, e, was, before, note);
+    this.keep(s);
+    return out;
+  }
+
+  /** Saves what a robot needs to come back as itself after a restart. */
+  private keep(s: Session) {
+    const st = s.state;
+    this.saved.set(st.id, {
+      name: st.name, custom: s.customName || undefined, color: st.color, title: st.title, root: s.root, building: st.building,
+      startedAt: st.startedAt ?? Date.now(), seen: s.lastSeen, lastPrompt: st.lastPrompt, lastReply: st.lastReply,
+    });
+  }
+
+  /** Writes remembered sessions now (the service is stopping). */
+  flush() { this.saved.flush(); }
+
+  /** Gives a session's robot your own name (kept across restarts). Its helpers follow ("Nova·2"). */
+  rename(id: string, name: unknown): boolean {
+    const s = this.sessions.get(id);
+    if (!s || typeof name !== 'string') return false;
+    // names show in many places (some as HTML): plain letters, digits, spaces and simple punctuation only
+    const n = name.replace(/[<>&"'`\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24);
+    if (!n || n === s.state.name) return false;
+    const old = s.state.name;
+    s.state.name = n;
+    s.customName = true;
+    this.keep(s);
+    this.emit({ type: 'agent', state: { ...s.state } });
+    for (const hid of s.helpers.values()) {
+      const h = this.helpers.get(hid);
+      if (!h) continue;
+      h.state.name = h.state.name.replace(/^.*·/, `${n}·`);
+      this.emit({ type: 'agent', state: { ...h.state } });
+    }
+    this.emit({ type: 'log', html: `<b>${esc(old)}</b> is now <b>${esc(n)}</b>` });
+    return true;
   }
 
   /**
@@ -278,29 +325,37 @@ export class Sessions {
   private service(st: AgentState, running: Running, e: HookEvent): string | undefined {
     const ev = e.hook_event_name, id = String(e.tool_use_id ?? '');
     if (ev === 'PreToolUse') {
-      // stopping a background command (Claude Code's KillShell / TaskStop): one lamp fewer
+      // stopping a background command or monitor (Claude Code's KillShell / TaskStop): that one, else the oldest
       if (/^(KillShell|KillBash|TaskStop)$/.test(e.tool_name ?? '') && st.background?.length) {
-        st.background = st.background.slice(1);
+        const which = e.tool_input?.shell_id ?? e.tool_input?.task_id ?? e.tool_input?.bash_id;
+        const i = st.background.findIndex((b) => b.id && b.id === which);
+        st.background = st.background.filter((_, j) => j !== (i >= 0 ? i : 0));
         if (!st.background.length) delete st.background;
       }
       if (e.tool_name !== 'Bash') return;
-      const kind = activityOf(e.tool_input?.command);
-      if (!kind) return;
-      running.set(id, { kind, bg: e.tool_input?.run_in_background === true });
-      st.activity = kind;
-      delete st.result;
+      const cmd = e.tool_input?.command;
+      const kind = activityOf(cmd), bg = e.tool_input?.run_in_background === true;
+      if (!kind && !bg) return;
+      running.set(id, { kind, bg, text: clipText(e.tool_input?.description || String(cmd ?? ''), 80) });
+      if (kind) { st.activity = kind; delete st.result; }
       return;
     }
     if (ev !== 'PostToolUse' && ev !== 'PostToolUseFailure') return;
+    // a monitor watching something in the background
+    if (e.tool_name === 'Monitor' && ev === 'PostToolUse') {
+      st.background = [...(st.background ?? []), { type: 'monitor', id: idIn(e.tool_response), text: clipText(e.tool_input?.description || String(e.tool_input?.command ?? 'Watching'), 80) }];
+      return 'Watching in the background';
+    }
     const r = running.get(id);
     if (!r) return;
     running.delete(id);
-    const still = [...running.values()].at(-1);
+    const still = [...running.values()].filter((x) => x.kind).at(-1);
     if (still) st.activity = still.kind; else delete st.activity;
     if (ev === 'PostToolUse' && r.bg) {
-      st.background = [...(st.background ?? []), r.kind];
+      st.background = [...(st.background ?? []), { type: 'shell', id: idIn(e.tool_response), kind: r.kind, text: r.text }];
       return 'Left running in the background';
     }
+    if (!r.kind) return;
     if (ev === 'PostToolUseFailure' && e.is_interrupt === true) return 'Stopped';
     const ok = ev === 'PostToolUse';
     st.result = { kind: r.kind, ok, at: Date.now() };
@@ -455,23 +510,33 @@ export class Sessions {
     if (b !== this.L(s.root).plaza) s.lastWork = b;
   }
 
-  private start(e: HookEvent): Session {
+  private start(e: HookEvent, saved?: SavedSession): Session {
     // the folder the session started in: the transcript knows it even if the first event we see
     // (e.g. after the service restarts) comes from a different current folder
     const dir = startFolder(e) ?? e.cwd ?? process.cwd();
     const root = this.repoRoot(dir) ?? dir; // a folder outside any repo is a town of its own
     this.visit(root);
     const used = new Set([...this.sessions.values()].map((s) => s.state.color));
-    const color = this.colors.find((c) => !used.has(c)) ?? this.colors[this.sessions.size % this.colors.length];
-    const name = NAMES[this.nameIdx++ % NAMES.length];
+    // a session we knew before (the service restarted, or it was resumed) comes back as itself
+    const color = saved && this.colors.includes(saved.color) ? saved.color : this.colors.find((c) => !used.has(c)) ?? this.colors[this.sessions.size % this.colors.length];
+    const name = saved?.name ?? NAMES[this.nameIdx++ % NAMES.length];
     const project = this.townName(root);
+    const L = this.L(root);
+    const building = saved?.root === root && saved.building && this.maps[this.project(root).townMap]?.some((b) => b.id === saved.building) ? saved.building : L.plaza ?? L.root;
+    // showing up mid-session with nothing saved (or no title yet): its transcript has the title and your last prompt
+    const told = e.hook_event_name !== 'UserPromptSubmit' && !saved?.title ? sessionLabels(safeTranscript(e.transcript_path)) : {};
     const s: Session = {
-      state: { id: e.session_id, name, color, building: this.L(root).plaza ?? this.L(root).root, status: 'idle', project, town: root, startedAt: Date.now() },
+      state: {
+        id: e.session_id, name, color, building, status: 'idle', project, town: root, startedAt: saved?.startedAt ?? Date.now(),
+        title: (saved?.title ?? told.title)?.replace(/\s+/g, ' ').slice(0, 80),
+        lastPrompt: saved?.lastPrompt ?? (told.lastPrompt ? plainText(told.lastPrompt, 600) : undefined), lastReply: saved?.lastReply,
+      },
       root, project, lastSeen: Date.now(), lastMove: 0, helpers: new Map(), pending: [], helperSeq: 1, endedAgents: new Set(),
-      home: dir, readAt: 0, host: {}, running: new Map(),
+      home: dir, readAt: 0, host: {}, running: new Map(), customName: saved?.custom,
     };
+    if (building !== L.plaza) s.lastWork = building;
     this.sessions.set(e.session_id, s);
-    this.emit({ type: 'log', html: `<b>${name}</b> started in ${esc(project)}` });
+    this.emit({ type: 'log', html: saved ? `<b>${esc(name)}</b> is back in ${esc(project)}` : `<b>${esc(name)}</b> started in ${esc(project)}` });
     return s;
   }
 
@@ -786,3 +851,25 @@ function startFolder(e: HookEvent): string | undefined {
 
 const isQuick = (t?: string) => t === 'Read' || t === 'Grep' || t === 'Glob' || t === 'LS';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** Claude Code's list of what's still running at the end of a turn, as background lamps. */
+function backgroundOf(tasks: unknown[]): BackgroundTask[] {
+  const out: BackgroundTask[] = [];
+  for (const t of tasks as any[]) {
+    if (!t || typeof t !== 'object' || (typeof t.status === 'string' && !/^(running|starting|pending)$/.test(t.status))) continue;
+    const id = typeof t.id === 'string' ? t.id : undefined;
+    const text = (v: unknown) => (typeof v === 'string' && v.trim() ? clipText(v, 80) : undefined);
+    if (t.type === 'shell') out.push({ type: 'shell', id, kind: activityOf(t.command), text: text(t.description) ?? text(t.command) ?? 'A command' });
+    else if (t.type === 'subagent') out.push({ type: 'agent', id, text: text(t.description) ?? text(t.agent_type) ?? 'A helper' });
+    else out.push({ type: /monitor/i.test(String(t.type)) ? 'monitor' : 'other', id, text: text(t.description) ?? text(t.command) ?? text(t.type) ?? 'Something' });
+  }
+  return out.slice(0, 20);
+}
+
+/** A background task's id in a tool's response, if it gives one. */
+function idIn(resp: unknown): string | undefined {
+  if (!resp || typeof resp !== 'object') return;
+  for (const [k, v] of Object.entries(resp)) if (typeof v === 'string' && /^(background_?task_?id|bash_?id|shell_?id|task_?id|monitor_?id)$/i.test(k)) return v;
+}
+
+const clipText = (s: string, n: number) => { const t = s.replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1).trimEnd() + '…' : t; };

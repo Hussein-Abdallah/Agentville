@@ -115,3 +115,24 @@ export function todoStatus(s: unknown): TodoItem['status'] {
 function parse(line: string): any {
   try { return JSON.parse(line); } catch { return; }
 }
+
+/**
+ * A session's title (the desktop app's "custom-title" lines) and your last prompt ("last-prompt"),
+ * for a robot that shows up mid-session (the service restarted): the newest of each, looking at the
+ * transcript's last 256 KB, then its first 256 KB.
+ */
+export function sessionLabels(transcript: string | undefined): { title?: string; lastPrompt?: string } {
+  if (!transcript) return {};
+  const out: { title?: string; lastPrompt?: string } = {};
+  const scan = (lines: string[]) => {
+    for (let i = lines.length - 1; i >= 0 && !(out.title && out.lastPrompt); i--) {
+      const l = lines[i];
+      if (!out.title && l.includes('"custom-title"')) { try { const o = JSON.parse(l); if (typeof o.customTitle === 'string') out.title = o.customTitle; } catch { /* partial line */ } }
+      if (!out.lastPrompt && l.includes('"last-prompt"')) { try { const o = JSON.parse(l); if (typeof o.lastPrompt === 'string') out.lastPrompt = o.lastPrompt; } catch { /* partial line */ } }
+    }
+  };
+  const tail = readTail(transcript, 256 * 1024);
+  if (tail) scan(tail.lines);
+  if (tail && !tail.whole && !(out.title && out.lastPrompt)) scan((readHead(transcript, 256 * 1024) ?? '').split('\n'));
+  return out;
+}

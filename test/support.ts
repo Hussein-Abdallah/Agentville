@@ -8,6 +8,7 @@ import { Sessions } from '../server/state';
 import { Worlds } from '../server/worlds';
 import { TownMaps } from '../server/townmaps';
 import { BuildingStore } from '../server/buildings';
+import { SessionStore } from '../server/sessionstore';
 
 const townFile = new URL('../public/towns/frostpeak/town.json', import.meta.url);
 const town = JSON.parse(fs.readFileSync(townFile, 'utf8'));
@@ -45,13 +46,14 @@ export function gitRepo(name: string, commits: [string, number][]) {
   return d;
 }
 
-/** A Sessions instance plus helpers to send events and look at the robots. Its worlds never read your real files. */
+/** A Sessions instance plus helpers to send events and look at the robots. It never reads or writes your real files; a second one with the same `home` is the service after a restart. */
 export function newTown(worlds?: Worlds, home = tmpDir('home')) {
   const emitted: any[] = [];
   worlds ??= new Worlds({ configFile: path.join(home, 'no-worlds.json'), claudeDir: path.join(home, '.claude'), home });
   const s = new Sessions({ frostpeak: buildings }, ['orange', 'blue', 'green'], (m) => emitted.push(m), worlds,
     new TownMaps(['frostpeak'], { file: path.join(home, '.agentville', 'towns.json') }),
-    new BuildingStore({ file: path.join(home, '.agentville', 'buildings.json'), delay: 0 }));
+    new BuildingStore({ file: path.join(home, '.agentville', 'buildings.json'), delay: 0 }),
+    new SessionStore({ file: path.join(home, '.agentville', 'sessions.json'), delay: 0 }));
   const send = (root: string, e: Record<string, unknown>, session = 's1') => s.handle({ session_id: session, cwd: root, ...e } as any) as any;
   return {
     s, emitted, send,

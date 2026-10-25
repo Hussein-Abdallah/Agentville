@@ -1,7 +1,7 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
 //   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'|'settings'};
-//                     the page sends {type:'alerts', on}, {type:'notify', can} and {type:'focus', id} (Go to session)
+//                     the page sends {type:'alerts', on}, {type:'notify', can}, {type:'focus', id} (Go to session) and {type:'rename', id, name}
 //   GET  /*        -> the built app (dist/)
 import http from 'node:http';
 import fs from 'node:fs';
@@ -176,6 +176,7 @@ server.on('upgrade', (req, socket, head) => {
           if (m.can === true) notifiers.add(ws); else notifiers.delete(ws);
           if (notifiers.size !== n) console.log(`Pages that can show notifications: ${notifiers.size}`);
         }
+        if (m?.type === 'rename' && typeof m.id === 'string' && page) sessions.rename(m.id, m.name);
         if (m?.type === 'focus' && typeof m.id === 'string' && page && Date.now() - lastFocus > 1000) {
           lastFocus = Date.now();
           const target = sessions.hostOf(m.id);
@@ -191,6 +192,9 @@ server.on('upgrade', (req, socket, head) => {
     });
   });
 });
+
+// remembered sessions are written a moment after each change: write them before stopping
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => { sessions.flush(); process.exit(0); });
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EADDRINUSE') console.error(`Port ${PORT} is busy. Is Agentville already running? (set AGENTVILLE_PORT to change it)`);

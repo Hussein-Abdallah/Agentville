@@ -46,6 +46,8 @@ export class World {
   private dragged = false;
   /** the town's train or ferry, if it has one */
   private transit?: Transit;
+  /** full frame rate until then (ms): the mouse is in use */
+  private lively = 0;
 
   constructor(private host: HTMLElement, public town: TownData, public sprites: RobotSprites) {}
 
@@ -61,7 +63,7 @@ export class World {
     this.glowTex = makeGlowTexture();
     this.glowLayer.addChild(this.ripples);
     this.app.stage.eventMode = 'static';
-    this.app.stage.on('pointermove', (e) => this.pointerMove(e.global.x, e.global.y));
+    this.app.stage.on('pointermove', (e) => { this.wake(); this.pointerMove(e.global.x, e.global.y); });
     this.app.stage.on('pointertap', (e) => { if (!this.dragged) this.pointerTap(e.global.x, e.global.y); });
     // drag to pan (when zoomed in), wheel or pinch to zoom toward the pointer
     this.app.stage.on('pointerdown', (e) => { this.dragged = false; this.drag = { x: e.global.x, y: e.global.y, cx: this.center[0], cy: this.center[1], moved: false }; });
@@ -80,6 +82,7 @@ export class World {
     this.app.stage.on('pointerupoutside', endDrag);
     this.app.canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.wake();
       const r = this.app.canvas.getBoundingClientRect();
       this.zoomBy(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
@@ -161,6 +164,7 @@ export class World {
 
   /** Remove every robot at once (the page is switching towns). */
   clear() {
+    this.wake();
     for (const r of this.robots.values()) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.badge.destroy(); r.tag.destroy({ children: true }); }
     this.robots.clear();
     this.onChange?.();
@@ -189,6 +193,7 @@ export class World {
 
   /** Zoom by a factor, keeping the image point under (gx, gy) in place (default: the middle). */
   zoomBy(f: number, gx = this.app.screen.width / 2, gy = this.app.screen.height / 2) {
+    this.wake();
     const [ix, iy] = this.toImage(gx, gy);
     this.zoom = Math.min(MAX_ZOOM, Math.max(1, this.zoom * f));
     const s = this.fitScale() * this.zoom;
@@ -198,6 +203,7 @@ export class World {
 
   /** Back to the whole town. */
   resetZoom() {
+    this.wake();
     this.zoom = 1;
     this.center = [this.town.size[0] / 2, this.town.size[1] / 2];
     this.fit();
@@ -242,8 +248,29 @@ export class World {
     if (hit) this.onRobotClick?.(hit.state.id);
   }
 
+  /**
+   * Idle CPU: full frame rate while something moves (a robot walking, the train, the mouse in use),
+   * otherwise 20 frames a second, enough for the robots' own animations (6–12 fps), the glows and badges.
+   */
+  private pace() {
+    const moving = this.drag || performance.now() < this.lively || (this.transit && this.transit.phase !== 'away')
+      || [...this.robots.values()].some((r) => r.busy);
+    const fps = moving ? 0 : 20; // 0: no cap
+    if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps;
+  }
+
+  /** Back to full frame rate for a moment (the mouse moved, zooming). A robot that moves wakes it by itself (busy). */
+  wake(ms = 1500) { this.lively = Math.max(this.lively, performance.now() + ms); this.pace(); }
+
+  /** The town isn't on screen (the world map or planet covers it): stop drawing it at all. */
+  set visible(on: boolean) {
+    if (on === this.app.ticker.started) return;
+    if (on) { this.app.start(); this.wake(); } else this.app.stop();
+  }
+
   private tick(dt: number) {
     dt = Math.min(dt, 0.05);
+    this.pace();
     this.clock += dt;
     // who is where
     const at = new Map<string, Robot[]>();

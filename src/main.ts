@@ -41,6 +41,8 @@ async function main() {
   let demo: Demo | null = null;
   /** Go to session: bring a robot's session (terminal, editor, Claude app) to the front; live mode only */
   let goToSession: ((id: string) => void) | null = null;
+  /** give a session's robot your own name (the service keeps it; the demo just changes it) */
+  let renameRobot: (id: string, name: string) => void = () => {};
 
   // Live mode has a town per repo; the page shows one at a time and keeps every robot.
   const agents = new Map<string, AgentState>();
@@ -188,6 +190,7 @@ async function main() {
     $('#wm-style').hidden = v !== 'world';
     $('#wm-style').textContent = mapStyle === 'board' ? 'Painted map' : 'Board';
     $('#planetview').hidden = v !== 'planet';
+    world.visible = v === 'town'; // the world map and planet cover the town: don't draw it underneath
     $('.zoom').style.display = v === 'town' ? '' : 'none';
     planet.show(v === 'planet', mapWorld ?? currentWorld());
     renderCrumbs();
@@ -268,6 +271,7 @@ async function main() {
       },
     });
     goToSession = (id) => conn.focus(id);
+    renameRobot = (id, name) => conn.rename(id, name);
     alertsBtn.onclick = () => conn.setAlerts(!alertsBtn.dataset.on);
     allowBtn.onclick = async () => { await Notification.requestPermission(); conn.setNotify(canNotify()); showAllow(); };
     conn.setNotify(canNotify());
@@ -282,6 +286,7 @@ async function main() {
     // robots in towns you aren't looking at count as arrived, so they keep working
     demo = new Demo((id) => demoMaps.get(id)!, sprites.colors(), applyAgent, removeAgent, log, (id) => !inView(agents.get(id)!) || world.robots.get(id)?.mode === 'present');
     $('#t-add').onclick = () => demo!.spawn();
+    renameRobot = (id, name) => demo!.rename(id, name);
     log('Demo mode: simulated agents');
     demo.start(12); // enough robots that bigger worlds aren't empty
   }
@@ -301,6 +306,10 @@ async function main() {
   // sidebar
   let last = '';
   let lastDetails = '';
+  /** the details panel's last exchange is shown in full */
+  let talkOpen = false;
+  /** renaming the selected robot: the panel isn't redrawn meanwhile */
+  let renaming = false;
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
     if (e.key === 'Escape' && needs.isOpen) needs.close();
@@ -312,6 +321,26 @@ async function main() {
     else if (e.key === '-') (view === 'planet' ? planet : world).zoomBy(1 / 1.4);
     else if (e.key === '0') (view === 'planet' ? planet : world).resetZoom();
   });
+  /** Click the name in the details panel: a box to type a new one (Enter saves, Esc cancels). */
+  const startRename = (el: HTMLElement) => {
+    const id = selected;
+    if (!id) return;
+    renaming = true;
+    const box = document.createElement('input');
+    box.className = 'rename'; box.maxLength = 24; box.value = el.textContent ?? ''; box.setAttribute('aria-label', 'Robot name');
+    el.replaceWith(box);
+    box.focus(); box.select();
+    let done = false;
+    const finish = (save: boolean) => {
+      if (done) return;
+      done = true; renaming = false;
+      const name = box.value.trim();
+      if (save && name && name !== agents.get(id)?.name) renameRobot(id, name);
+      lastDetails = ''; render();
+    };
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') { e.stopPropagation(); finish(false); } });
+    box.addEventListener('blur', () => finish(true));
+  };
   const render = () => {
     const list = [...world.robots.values()].filter((r) => r.mode !== 'gone').map((r) => r.state);
     list.sort((a, b) => (a.parentId ?? a.id).localeCompare(b.parentId ?? b.id) || (a.parentId ? 1 : -1));
@@ -325,14 +354,16 @@ async function main() {
     for (const r of world.robots.values()) r.selected = r.state.id === selected;
     $('#agents').querySelectorAll<HTMLElement>('.card').forEach((el) => el.classList.toggle('sel', el.dataset.id === selected));
     const sel = selected ? world.robots.get(selected)!.state : null;
-    const d = sel ? details(sel, list, world, towns.find((t) => t.id === sel.town), goToSession ? appOf(sel, agents) ?? '' : undefined) : '';
-    if (d !== lastDetails) {
+    const d = sel ? details(sel, list, world, towns.find((t) => t.id === sel.town), goToSession ? appOf(sel, agents) ?? '' : undefined, talkOpen) : '';
+    if (renaming && sel) { /* keep the name box */ } else if (d !== lastDetails) {
       lastDetails = d;
       $('#details').innerHTML = d;
       $('#details').style.display = d ? '' : 'none';
       $('#details').querySelector<HTMLElement>('.x')?.addEventListener('click', () => { selected = null; render(); });
       $('#details').querySelectorAll<HTMLElement>('[data-id]').forEach((el) => (el.onclick = () => select(el.dataset.id!)));
       $('#details').querySelector<HTMLButtonElement>('.go')?.addEventListener('click', () => { if (selected) goToSession?.(selected); });
+      $('#details').querySelector<HTMLElement>('.talk')?.addEventListener('click', () => { talkOpen = !talkOpen; render(); });
+      $('#details').querySelector<HTMLElement>('.nm.can')?.addEventListener('click', (e) => startRename(e.currentTarget as HTMLElement));
     }
     // needs-you across every town: the counter opens the board
     const all = [...agents.values()];
@@ -352,7 +383,8 @@ async function main() {
   const picker = new TownPicker($('#town-pick'), (id) => { setTown(id, true); setView('town'); });
   const renderPicker = () => picker.update(towns, [...agents.values()], current);
   world.onChange = render;
-  setInterval(render, 300);
+  setInterval(() => { if (!document.hidden) render(); }, 300); // a hidden tab catches up when it's shown
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) render(); });
 
   // controls
   const toggle = (id: string, get: () => boolean, set: (v: boolean) => void) => {
@@ -382,7 +414,7 @@ function card(a: AgentState, world: World, hex: string) {
   const detail = esc(train || (moving ? `→ ${where}` : a.status === 'waiting' ? `Waiting at ${where}` : `${a.task ? a.task + ' · ' : ''}${where}`));
   return `<div class="card ${a.status === 'waiting' && !moving ? 'wait' : ''} ${a.parentId ? 'sub' : ''}" data-id="${a.id}">
     <span class="dot" style="background:${hex}"></span>
-    <div class="mid" title="${esc(a.title ?? '')}"><div class="top">${a.name}${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}${todoCount(a)}<span class="st ${st[0]}">${st[1]}</span></div><div class="where">${detail}</div>${meter(a, true)}</div></div>`;
+    <div class="mid" title="${esc(a.title ?? '')}"><div class="top">${esc(a.name)}${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}${todoCount(a)}<span class="st ${st[0]}">${st[1]}</span></div><div class="where">${detail}</div>${meter(a, true)}</div></div>`;
 }
 
 /** "3/7" for a robot with a to-do list. */
@@ -431,7 +463,7 @@ function todoSection(a: AgentState) {
 
 /** The details panel for one robot. */
 /** `app`: the session's app for the Go to session button ('' when unknown; undefined in demo mode: no button). */
-function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo, app?: string) {
+function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo, app?: string, talkOpen = false) {
   const r = world.robots.get(a.id)!;
   const hex = world.sprites.meta.colors[a.color];
   const moving = r.mode === 'walking' || r.mode === 'arriving';
@@ -448,7 +480,7 @@ function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo
     a.status === 'waiting' && a.ask ? row(a.task === 'Waiting for your reply' ? 'Last said' : 'What', esc(a.ask)) : '',
     a.activity ? row('Running', esc(BADGE_LABEL[a.activity])) : '',
     a.result ? row('Last command', `<span class="res ${a.result.ok ? 'ok' : 'bad'}">${a.result.ok ? '✓' : '✗'}</span> ${esc(RESULT_LABEL[a.result.kind][a.result.ok ? 0 : 1])} · ${ago(a.result.at)}`) : '',
-    a.background?.length ? row('In background', esc([...new Set(a.background)].map((k) => BACKGROUND_LABEL[k]).join(', '))) : '',
+    a.background?.length ? row('In background', a.background.map((b) => `<div class="bg-item">${esc(BACKGROUND_TYPE[b.type])}${esc(b.text)}</div>`).join('')) : '',
     parent ? row('Helper of', `<a data-id="${parent.id}">${esc(parent.name)}</a>`) : '',
     helpers.length ? row('Helpers', helpers.map((h) => `<a data-id="${h.id}">${esc(h.name)}</a>`).join(', ')) : '',
     a.startedAt ? row('Started', ago(a.startedAt)) : '',
@@ -456,11 +488,12 @@ function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo
   ].join('');
   const recent = (a.recent ?? []).map((x) => `<li><span class="t">${clock(x.t)}</span>${esc(x.text)}</li>`).join('');
   return `<div class="det">
-    <div class="top"><span class="dot" style="background:${hex}"></span>${esc(a.name)}<span class="st ${st[0]}">${st[1]}</span><button class="x" title="Close (Esc)">✕</button></div>
+    <div class="top"><span class="dot" style="background:${hex}"></span>${a.parentId ? `<span class="nm">${esc(a.name)}</span>` : `<span class="nm can" title="Rename">${esc(a.name)}</span>`}<span class="st ${st[0]}">${st[1]}</span><button class="x" title="Close (Esc)">✕</button></div>
     ${a.title ? `<div class="title">${esc(a.title)}</div>` : ''}
     ${app === undefined ? '' : app ? `<button class="go" title="Bring ${a.parentId ? 'its parent' : 'this'} session to the front (G)">Open in ${esc(app)}</button>`
       : `<button class="go" disabled title="Agentville doesn't know which app this session runs in yet. Run npm run hooks:install again, then send the session a new message.">Go to session</button>`}
     <div class="grid">${rows}</div>
+    ${talkSection(a, talkOpen)}
     ${contextSection(a)}
     ${todoSection(a)}
     ${recent ? `<h3>Recent</h3><ul>${recent}</ul>` : ''}
@@ -485,5 +518,12 @@ const RESULT_LABEL: Record<ActivityKind, [string, string]> = {
 };
 /** Failures worth a toast (a failed git pull or install shows on the robot, but isn't news). */
 const FAIL_TOASTS = new Set<ActivityKind>(['test', 'build', 'deploy']);
-const BACKGROUND_LABEL: Record<ActivityKind, string> = { test: 'tests', build: 'a build', git: 'git', install: 'an install', server: 'a dev server', deploy: 'a deploy' };
+const BACKGROUND_TYPE: Record<NonNullable<AgentState['background']>[number]['type'], string> = { shell: '', agent: 'Helper: ', monitor: 'Watching: ', other: '' };
+
+/** What you last asked and how Claude answered; clipped until clicked. */
+function talkSection(a: AgentState, open: boolean) {
+  if (!a.lastPrompt && !a.lastReply) return '';
+  const said = (who: string, cls: string, text?: string) => (text ? `<div class="${cls}"><span class="who">${who}</span>${esc(text)}</div>` : '');
+  return `<h3>Last exchange</h3><div class="talk${open ? ' open' : ''}" title="${open ? 'Show less' : 'Show all'}">${said('You', 'you', a.lastPrompt)}${said('Claude', 'claude', a.lastReply)}</div>`;
+}
 

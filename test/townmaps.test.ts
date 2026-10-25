@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Sessions } from '../server/state';
+import { BuildingStore } from '../server/buildings';
+import { SessionStore } from '../server/sessionstore';
 import { TownMaps } from '../server/townmaps';
 import { Worlds } from '../server/worlds';
 import { tmpDir } from './support';
@@ -22,7 +24,8 @@ function setup() {
   const make = () => {
     const worlds = new Worlds({ configFile: path.join(h, 'none.json'), claudeDir: path.join(h, '.claude'), home: h });
     worlds.addRepo(repo('Dev/Blog/site')); // like a repo learned from Claude's history: makes ~/Dev the dev folder
-    return new Sessions(MAPS, ['orange'], () => {}, worlds, new TownMaps(Object.keys(MAPS), { file, random: () => pick }));
+    return new Sessions(MAPS, ['orange'], () => {}, worlds, new TownMaps(Object.keys(MAPS), { file, random: () => pick }),
+      new BuildingStore({ file: path.join(path.dirname(file), 'buildings.json'), delay: 0 }), new SessionStore({ file: path.join(path.dirname(file), 'sessions.json'), delay: 0 }));
   };
   let pick = 0; // the "random" draw: 0 takes the first choice, 0.99 the last
   const visit = (s: Sessions, root: string) => s.handle({ hook_event_name: 'UserPromptSubmit', session_id: root, cwd: root, prompt: 'x' } as any) as any;

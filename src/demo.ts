@@ -60,6 +60,15 @@ function sampleWorld(world: string, repos: string[]): TownInfo[] {
     spot: i < maps.length, primary: i === 0, folders: {}, names: {},
   }));
 }
+/** What a demo session was asked, and how it answered when done. */
+const TALKS: { prompt: string; reply: string }[] = [
+  { prompt: 'The login form accepts an empty password. Can you fix it and add a test?', reply: 'Fixed: the form now rejects empty passwords and shows "Enter your password". Added a test for it; all 48 tests pass.' },
+  { prompt: 'Add a search box to the orders page that filters by customer name.', reply: 'The orders page has a search box now. It filters as you type and keeps the filter in the address, so a reload keeps it.' },
+  { prompt: 'Why is the dashboard slow to load?', reply: 'It loaded every chart\'s data on start. Charts now load when they scroll into view, so the first paint is about 3 times faster. Want me to cache the totals too?' },
+  { prompt: 'Update the README with the new setup steps.', reply: 'The README now covers installing, the .env values and running the tests. I left the deploy section as it was.' },
+  { prompt: 'Rename the "client" table to "customer" everywhere.', reply: 'Renamed in the schema, the migration, the API and the UI labels. The migration is ready but not run yet.' },
+];
+
 /** What a waiting demo robot wants, as the live service words it. */
 const ASKS: { task: string; ask: string }[] = [
   { task: 'Wants to run a command', ask: 'Run the unit tests: npm test' },
@@ -133,7 +142,7 @@ export class Demo {
     if (a.activity && a.activity !== kind) {
       const ended = a.activity;
       delete a.activity;
-      if (ended === 'server' && Math.random() < 0.5) a.background = ['server'];
+      if (ended === 'server' && Math.random() < 0.5) a.background = [{ type: 'shell', kind: 'server', text: 'Start the dev server: npm run dev' }];
       else a.result = { kind: ended, ok: Math.random() < 0.8, at: Date.now() };
     }
     if (kind) { a.activity = kind; delete a.result; }
@@ -158,11 +167,26 @@ export class Demo {
     const name = parent ? `${parent.name}·2` : NAMES[(this.n - 1) % NAMES.length];
     const town = parent ? DEMO_TOWNS.find((t) => t.id === parent.town)! : pick(DEMO_TOWNS);
     const building = pick(this.buildings(town.id));
-    const s: AgentState = { id, name, color, building, status: 'working', task: this.task(town.id, building), parentId, project: town.name, town: town.id, startedAt: Date.now() };
+    const talk = parent ? undefined : pick(TALKS);
+    const s: AgentState = {
+      id, name, color, building, status: 'working', task: this.task(town.id, building), parentId, project: town.name, town: town.id, startedAt: Date.now(),
+      title: talk?.prompt.slice(0, 80), lastPrompt: talk?.prompt,
+    };
     this.agents.set(id, s);
     this.send(s);
     this.timers.set(id, performance.now() + 7000 + Math.random() * 6000);
     this.log(parent ? `<b>${parent.name}</b> started a helper` : `<b>${name}</b> started a session`);
+  }
+
+  /** Your own name for a robot (its helpers follow). */
+  rename(id: string, name: string) {
+    const a = this.agents.get(id);
+    if (!a) return;
+    const old = a.name;
+    a.name = name.replace(/[<>&"'`\\]/g, '').trim().slice(0, 24) || a.name;
+    this.send(a);
+    for (const h of this.agents.values()) if (h.parentId === id) { h.name = h.name.replace(/^.*·/, `${a.name}·`); this.send(h); }
+    this.log(`<b>${old}</b> is now <b>${a.name}</b>`);
   }
 
   approve(id: string) {
@@ -188,6 +212,7 @@ export class Demo {
       const plaza = plazaOf(this.mapOf(a.town!));
       if (plaza && a.status !== 'idle' && !a.parentId && r > 0.82) {
         a.building = plaza; a.status = 'idle'; a.task = undefined;
+        a.lastReply = TALKS.find((t) => t.prompt === a.lastPrompt)?.reply;
         this.log(`<b>${a.name}</b> finished and went to the plaza`);
         this.timers.set(id, now + 8000 + Math.random() * 8000);
       } else if (r < 0.14) {
