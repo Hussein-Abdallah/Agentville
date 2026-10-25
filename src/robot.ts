@@ -138,16 +138,20 @@ export class Robot {
     // movement
     let moving = false;
     if (this.path.length && this.mode !== 'held') {
-      const [tx, ty] = this.path[0];
-      const dx = tx - this.x, dy = ty - this.y, d = Math.hypot(dx, dy);
-      const step = this.town.walkSpeed * this.scaleAt(this.y) * dt;
-      if (d <= step) {
-        this.x = tx; this.y = ty; this.path.shift();
-      } else {
-        this.x += (dx / d) * step; this.y += (dy / d) * step;
+      // go this frame's whole distance, past as many path points as it takes: stopping at a point
+      // would make the frame count as standing still (an idle frame flashing in while rolling)
+      let step = this.town.walkSpeed * this.scaleAt(this.y) * dt;
+      let dir: [number, number] | null = null;
+      while (step > 0 && this.path.length) {
+        const [tx, ty] = this.path[0];
+        const dx = tx - this.x, dy = ty - this.y, d = Math.hypot(dx, dy);
+        if (d > 1e-6) dir = [dx, dy];
+        if (d <= step) { this.x = tx; this.y = ty; this.path.shift(); step -= d; }
+        else { this.x += (dx / d) * step; this.y += (dy / d) * step; step = 0; }
+      }
+      if (dir) {
         moving = true;
-        const want = yawFromScreen(dx, dy);
-        this.yaw += angleDiff(want, this.yaw) * Math.min(1, TURN_RATE * dt);
+        this.yaw += angleDiff(yawFromScreen(dir[0], dir[1]), this.yaw) * Math.min(1, TURN_RATE * dt);
       }
       if (!this.path.length) {
         this.at = this.target;

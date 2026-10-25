@@ -52,6 +52,7 @@ export class World {
   async init() {
     await this.app.init({ resizeTo: this.host, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: Math.min(devicePixelRatio, 2) });
     this.host.appendChild(this.app.canvas);
+    this.watchDensity();
     this.robotLayer.sortableChildren = true;
     this.scene.addChild(this.bg, this.glowLayer, this.pathLayer, this.labelLayer, this.robotLayer, this.tagLayer, this.bubbleLayer, this.tipLayer);
     this.bubbleLayer.sortableChildren = true;
@@ -88,10 +89,27 @@ export class World {
     this.fit();
   }
 
+  /**
+   * Keep the canvas at the screen's pixel density: when the window moves to a screen with another
+   * density (a wide external monitor, say), render at that density instead of being stretched.
+   */
+  private watchDensity() {
+    const apply = () => {
+      const want = Math.min(devicePixelRatio, 2);
+      if (this.app.renderer.resolution === want) return;
+      this.app.renderer.resolution = want;
+      this.app.resize();
+      this.fit();
+    };
+    const listen = () => matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener('change', () => { apply(); listen(); }, { once: true });
+    apply();
+    listen();
+  }
+
   /** Show a town map (background, building glows and labels). Robots are cleared; add them again after. */
   async load(town: TownData) {
     // load the picture first, then swap everything at once: the ticker must never see a half-switched town
-    const tex = await Assets.load(town.image);
+    const tex = await Assets.load({ src: town.image, data: { autoGenerateMipmaps: true } });
     this.clear();
     this.town = town;
     this.bg.texture = tex;

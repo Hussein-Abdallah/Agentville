@@ -35,7 +35,8 @@ export class RobotSprites {
     const out = {} as RobotFrames;
     await Promise.all(
       ANIMS.map(async (a) => {
-        const sheet: Texture = await Assets.load(`${BASE}${color}/${a}.webp`);
+        // mipmaps: robots are drawn smaller than their frames; without them, detail shimmers as they move
+        const sheet: Texture = await Assets.load({ src: `${BASE}${color}/${a}.webp`, data: { autoGenerateMipmaps: true } });
         const n = this.meta.animations[a].frames;
         out[a] = this.meta.directions.map((_, row) =>
           Array.from({ length: n }, (_, f) => new Texture({ source: sheet.source, frame: new Rectangle(f * w, row * h, w, h) })),
