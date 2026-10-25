@@ -17,14 +17,14 @@ test('it comes when robots wait, stops, waits for those still walking, then leav
   assert.equal(nextPhase('leaving', TRAVEL, true, false), 'away', 'leaves first; the next trip comes after');
 });
 
-test('points along a route, with its direction; past the end it stays at the end', () => {
+test('points along a route, with its direction; past the end it carries on the same way', () => {
   const r: [number, number][] = [[0, 0], [100, 0], [100, 50]];
   assert.equal(routeLength(r), 150);
   assert.deepEqual(pointAt(r, 50), [50, 0, 0]);
   const [x, y, a] = pointAt(r, 125);
   assert.deepEqual([x, y], [100, 25]);
   assert.ok(Math.abs(a - Math.PI / 2) < 1e-9);
-  assert.deepEqual(pointAt(r, 999).slice(0, 2), [100, 50]);
+  assert.deepEqual(pointAt(r, 175).slice(0, 2), [100, 75], 'carries on past the end');
 });
 
 test('every town map has a train or ferry route that starts at its stop and leaves the picture', () => {

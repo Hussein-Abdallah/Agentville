@@ -36,24 +36,28 @@ export const MAX_DWELL = 9; // s at most, waiting for robots still walking to th
 /**
  * The train's next phase, `t` seconds into this one. `need`: robots are waiting to get on or off;
  * `walking`: robots are still on their way to the station (it waits for them, up to MAX_DWELL).
+ * `leaveTime`: how long leaving takes (a boat takes longer: it backs out and turns first).
  */
-export function nextPhase(phase: Phase, t: number, need: boolean, walking: boolean): Phase {
+export function nextPhase(phase: Phase, t: number, need: boolean, walking: boolean, leaveTime = TRAVEL): Phase {
   if (phase === 'away') return need ? 'arriving' : 'away';
   if (phase === 'arriving') return t >= TRAVEL ? 'dwell' : 'arriving';
   if (phase === 'dwell') return t >= DWELL && !need && (!walking || t >= MAX_DWELL) ? 'leaving' : 'dwell';
-  return t >= TRAVEL ? 'away' : 'leaving';
+  return t >= leaveTime ? 'away' : 'leaving';
 }
 
 export function routeLength(r: [number, number][]) {
   return r.slice(1).reduce((n, p, i) => n + Math.hypot(p[0] - r[i][0], p[1] - r[i][1]), 0);
 }
 
-/** The point `d` px along a route, with the direction it runs there (radians); past the end, the end. */
+/**
+ * The point `d` px along a route, with the direction it runs there (radians). Past the end it carries
+ * on in the last stretch's direction, so a long train can go all the way out of the picture.
+ */
 export function pointAt(r: [number, number][], d: number): [number, number, number] {
   for (let i = 0; i < r.length - 1; i++) {
     const [x1, y1] = r[i], [x2, y2] = r[i + 1], seg = Math.hypot(x2 - x1, y2 - y1);
     if (d <= seg || i === r.length - 2) {
-      const f = seg ? Math.min(d, seg) / seg : 0;
+      const f = seg ? d / seg : 0;
       return [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f, Math.atan2(y2 - y1, x2 - x1)];
     }
     d -= seg;

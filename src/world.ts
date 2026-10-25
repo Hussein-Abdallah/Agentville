@@ -2,7 +2,7 @@ import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 
 import type { AgentState, TownData } from './types';
 import { RobotSprites } from './sprites';
 import { Robot } from './robot';
-import { Transit } from './transit';
+import { Transit, loadVehicle } from './transit';
 
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 const SLOTS = [0, -46, 46, -92, 92, -138, 138];
@@ -115,8 +115,12 @@ export class World {
     this.bg.texture = tex;
     this.bg.width = town.size[0]; this.bg.height = town.size[1];
     this.transit?.view.destroy({ children: true });
-    this.transit = town.transit ? new Transit(town, town.transit) : undefined;
-    if (this.transit) this.robotLayer.addChild(this.transit.view);
+    const transit = (this.transit = town.transit ? new Transit(town, town.transit) : undefined);
+    if (transit) {
+      this.robotLayer.addChild(transit.view);
+      // the model (train or boat), once loaded; until then (or without one) the drawn version
+      loadVehicle(town.transit!.kind === 'ferry' ? 'boat' : 'train').then((look) => { if (this.transit === transit) transit.setLook(look); }).catch(() => {});
+    }
     for (const g of this.glows.values()) g.destroy();
     for (const l of this.labels.values()) l.destroy({ children: true });
     this.glows.clear(); this.labels.clear(); this.labelKey.clear();

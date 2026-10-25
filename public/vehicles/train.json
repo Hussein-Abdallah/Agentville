@@ -1,0 +1,16 @@
+{
+  "name": "train",
+  "image": "train.webp",
+  "frame": {
+    "w": 276,
+    "h": 201
+  },
+  "anchor": {
+    "x": 138,
+    "y": 128
+  },
+  "headings": 32,
+  "cols": 8,
+  "lengthPx": 260,
+  "elevationDeg": 30
+}

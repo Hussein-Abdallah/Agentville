@@ -1,0 +1,16 @@
+{
+  "name": "boat",
+  "image": "boat.webp",
+  "frame": {
+    "w": 276,
+    "h": 261
+  },
+  "anchor": {
+    "x": 138,
+    "y": 188
+  },
+  "headings": 32,
+  "cols": 8,
+  "lengthPx": 260,
+  "elevationDeg": 30
+}

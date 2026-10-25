@@ -1,11 +1,55 @@
 // A town's train (or ferry): it comes in along the town's route when robots are waiting to get on
-// or off, stops, waits while they do, and leaves the way it came. Drawn in code as small boxes in
-// the towns' three-quarter view, so it fits any track direction; real art can replace it later.
-import { Container, Graphics } from 'pixi.js';
+// or off, stops, waits while they do, and leaves the way it came. Shown with a pre-rendered model
+// (public/vehicles/train or boat: 32 headings, see tools/robot-sprites/vehicles.html), picking the
+// heading closest to where it's going; drawn in code as small boxes if that's missing.
+import { Assets, Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
 import type { TownData, TransitDef } from './types';
 import { TRAVEL, nextPhase, pointAt, routeLength, type Phase } from './town';
 
+/** A boat leaving: it backs away from the jetty while turning round (BACK_OUT s), then goes out bow first. */
+const BOAT_LEAVE = 5.6, BACK_OUT = 2.4;
+const ease = (u: number) => u * u * (3 - 2 * u);
+
 interface Box { L: number; W: number; H: number; side: number; top: number; windows?: number }
+
+/** A pre-rendered vehicle: one frame per heading (heading k points k × 360°/n from screen-right toward "away"). */
+export interface VehicleLook {
+  frames: Texture[];
+  anchor: [number, number];
+  /** the model's length in frame px at scale 1 */
+  lengthPx: number;
+  /** its length in the town, in robot heights */
+  lengthRobots: number;
+  /** it has a bow (a boat): it turns to go out front-first; a train with a cab at each end just reverses */
+  bow: boolean;
+}
+
+const LOOKS: Record<string, { lengthRobots: number; bow: boolean }> = { train: { lengthRobots: 3.4, bow: false }, boat: { lengthRobots: 2.4, bow: true } };
+const loading = new Map<string, Promise<VehicleLook>>();
+
+/** Loads public/vehicles/<name>.json and its sheet (once). */
+export function loadVehicle(name: 'train' | 'boat'): Promise<VehicleLook> {
+  let p = loading.get(name);
+  if (!p) {
+    p = (async () => {
+      const meta = await fetch(`vehicles/${name}.json`).then((r) => { if (!r.ok) throw new Error(name); return r.json(); });
+      const sheet: Texture = await Assets.load({ src: `vehicles/${meta.image}`, data: { autoGenerateMipmaps: true } });
+      const { w, h } = meta.frame;
+      const frames = Array.from({ length: meta.headings }, (_, k) =>
+        new Texture({ source: sheet.source, frame: new Rectangle((k % meta.cols) * w, Math.floor(k / meta.cols) * h, w, h) }));
+      return { frames, anchor: [meta.anchor.x / w, meta.anchor.y / h], lengthPx: meta.lengthPx, ...LOOKS[name] };
+    })();
+    loading.set(name, p);
+  }
+  return p;
+}
+
+/** The sheet's heading for a direction on screen (radians, image px): the camera looks 30° down, so screen-up is squashed. */
+function headingIndex(a: number, n: number) {
+  const gx = Math.cos(a), gy = Math.sin(a) / Math.sin(Math.PI / 6);
+  const psi = Math.atan2(-gy, gx);
+  return ((Math.round(psi / (Math.PI * 2 / n)) % n) + n) % n;
+}
 
 export class Transit {
   /** goes in the town's robot layer (sorted by depth); masked to the picture */
@@ -16,6 +60,8 @@ export class Transit {
   private len: number;
   private puffs: { x: number; y: number; age: number }[] = [];
   private puffClock = 0;
+  private look?: VehicleLook;
+  private sprite?: Sprite;
 
   constructor(private town: TownData, private def: TransitDef) {
     this.len = routeLength(def.route);
@@ -27,6 +73,20 @@ export class Transit {
     this.view.visible = false;
   }
 
+  /** Use a pre-rendered model instead of the drawn boxes. */
+  setLook(look: VehicleLook) {
+    this.look = look;
+    this.sprite = new Sprite(look.frames[0]);
+    this.sprite.anchor.set(...look.anchor);
+    this.view.addChildAt(this.sprite, 1);
+  }
+
+  /** The vehicle's length along the route, image px (at the stop's depth). */
+  private length() {
+    const s = 0.78 + 0.32 * (this.def.stop[1] / this.town.size[1]);
+    return this.look ? this.look.lengthRobots * this.town.robotHeight * s : 210 * (this.town.robotHeight / 92) * s;
+  }
+
   /** At the stop with its doors open: robots get on and off now. */
   get here() { return this.phase === 'dwell'; }
 
@@ -36,13 +96,47 @@ export class Transit {
    */
   tick(dt: number, need: boolean, walking: boolean) {
     this.t += dt;
-    const next = nextPhase(this.phase, this.t, need, walking);
+    const next = nextPhase(this.phase, this.t, need, walking, this.look?.bow ? BOAT_LEAVE : TRAVEL);
     if (next !== this.phase) { this.phase = next; this.t = 0; }
     this.view.visible = this.phase !== 'away' || this.puffs.length > 0;
     const f = Math.min(1, this.t / TRAVEL);
-    // distance of the front from the stop: slows down coming in, speeds up going out
-    const d = this.phase === 'arriving' ? this.len * (1 - f) * (1 - f) : this.phase === 'leaving' ? this.len * f * f : this.phase === 'dwell' ? 0 : this.len;
-    this.draw(d, dt, this.phase === 'arriving' || this.phase === 'leaving');
+    // distance of the front from the stop: slows down coming in, speeds up going out, and goes far
+    // enough that the whole vehicle is out of the picture (the route carries on past its end)
+    const reach = this.len + this.length();
+    const d = this.phase === 'arriving' ? reach * (1 - f) * (1 - f) : this.phase === 'leaving' ? reach * f * f : this.phase === 'dwell' ? 0 : reach;
+    const moving = this.phase === 'arriving' || this.phase === 'leaving';
+    if (this.look) this.drawModel(d, moving); else this.draw(d, dt, moving);
+  }
+
+  /** The pre-rendered vehicle at distance d (its front) along the route. */
+  private drawModel(d: number, moving: boolean) {
+    const look = this.look!, sp = this.sprite!, g = this.g.clear();
+    const H = this.town.size[1], depth = (y: number) => 0.78 + 0.32 * (y / H);
+    const L = look.lengthRobots * this.town.robotHeight;
+    const half = (L * depth(this.def.stop[1])) / 2;
+    // where its middle is along the route, and which way it points: in toward the stop (against the
+    // route) while arriving and waiting; a train leaves by reversing the way it came
+    let along = d + half, turn = 0;
+    if (look.bow && this.phase === 'leaving') {
+      // like a real boat: back away from the jetty while swinging round, then go out bow first
+      if (this.t < BACK_OUT) { const u = ease(this.t / BACK_OUT); along = half + L * 0.7 * u; turn = u; }
+      else { const v = (this.t - BACK_OUT) / (BOAT_LEAVE - BACK_OUT); along = half + L * 0.7 + (this.len + L * 1.5) * v * v; turn = 1; }
+    }
+    const [x, y, a] = pointAt(this.def.route, along);
+    const s = depth(y);
+    const dir = a + Math.PI * (1 - turn);
+    sp.texture = look.frames[headingIndex(dir, look.frames.length)];
+    sp.position.set(x, y);
+    sp.scale.set((L * s) / look.lengthPx);
+    sp.visible = this.phase !== 'away';
+    if (look.bow && moving) {
+      // churned water at the stern (where the motors are), whichever way it's going
+      const back = dir + Math.PI;
+      for (let i = 1; i <= 3; i++) {
+        const bx = x + Math.cos(back) * (L / 2 + i * 12) * s, by = y + Math.sin(back) * (L / 2 + i * 12) * s * 0.5;
+        g.ellipse(bx, by + 2 * s, (10 + i * 7) * s, (4 + i * 2) * s).stroke({ color: 0xffffff, width: 1.5, alpha: 0.5 - i * 0.12 });
+      }
+    }
   }
 
   private draw(d: number, dt: number, moving: boolean) {
