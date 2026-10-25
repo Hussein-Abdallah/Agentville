@@ -4,7 +4,7 @@
 // heading closest to where it's going; drawn in code as small boxes if that's missing.
 import { Assets, Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
 import type { TownData, TransitDef } from './types';
-import { TRAVEL, nextPhase, pointAt, routeLength, type Phase } from './town';
+import { TRAVEL, arriveCurve, leaveCurve, nextPhase, pointAt, routeLength, type Phase } from './town';
 
 /** A boat leaving: it backs away from the jetty while turning round (BACK_OUT s), then goes out bow first. */
 const BOAT_LEAVE = 5.6, BACK_OUT = 2.4;
@@ -24,7 +24,7 @@ export interface VehicleLook {
   bow: boolean;
 }
 
-const LOOKS: Record<string, { lengthRobots: number; bow: boolean }> = { train: { lengthRobots: 3.4, bow: false }, boat: { lengthRobots: 2.4, bow: true } };
+const LOOKS: Record<string, { lengthRobots: number; bow: boolean }> = { train: { lengthRobots: 3.0, bow: false }, boat: { lengthRobots: 2.4, bow: true } };
 const loading = new Map<string, Promise<VehicleLook>>();
 
 /** Loads public/vehicles/<name>.json and its sheet (once). */
@@ -81,6 +81,12 @@ export class Transit {
     this.view.addChildAt(this.sprite, 1);
   }
 
+  /** The direction from a vehicle's front to its back when it stands at the stop (radians, image px). */
+  private platformAngle(len: number) {
+    const [x0, y0] = pointAt(this.def.route, 0), [x1, y1] = pointAt(this.def.route, len);
+    return Math.atan2(y1 - y0, x1 - x0);
+  }
+
   /** The vehicle's length along the route, image px (at the stop's depth). */
   private length() {
     const s = 0.78 + 0.32 * (this.def.stop[1] / this.town.size[1]);
@@ -100,10 +106,11 @@ export class Transit {
     if (next !== this.phase) { this.phase = next; this.t = 0; }
     this.view.visible = this.phase !== 'away' || this.puffs.length > 0;
     const f = Math.min(1, this.t / TRAVEL);
-    // distance of the front from the stop: slows down coming in, speeds up going out, and goes far
-    // enough that the whole vehicle is out of the picture (the route carries on past its end)
+    // distance of the front from the stop: in at a steady speed, braking into the station; out by
+    // pulling away, then steady; far enough that the whole vehicle is out of the picture (the route
+    // carries on past its end)
     const reach = this.len + this.length();
-    const d = this.phase === 'arriving' ? reach * (1 - f) * (1 - f) : this.phase === 'leaving' ? reach * f * f : this.phase === 'dwell' ? 0 : reach;
+    const d = this.phase === 'arriving' ? reach * (1 - arriveCurve(f)) : this.phase === 'leaving' ? reach * leaveCurve(f) : this.phase === 'dwell' ? 0 : reach;
     const moving = this.phase === 'arriving' || this.phase === 'leaving';
     if (this.look) this.drawModel(d, moving); else this.draw(d, dt, moving);
   }
@@ -120,10 +127,13 @@ export class Transit {
     if (look.bow && this.phase === 'leaving') {
       // like a real boat: back away from the jetty while swinging round, then go out bow first
       if (this.t < BACK_OUT) { const u = ease(this.t / BACK_OUT); along = half + L * 0.7 * u; turn = u; }
-      else { const v = (this.t - BACK_OUT) / (BOAT_LEAVE - BACK_OUT); along = half + L * 0.7 + (this.len + L * 1.5) * v * v; turn = 1; }
+      else { const v = (this.t - BACK_OUT) / (BOAT_LEAVE - BACK_OUT); along = half + L * 0.7 + (this.len + L * 1.5) * leaveCurve(v, 0.5); turn = 1; }
     }
-    const [x, y, a] = pointAt(this.def.route, along);
+    const [x, y, alongAngle] = pointAt(this.def.route, along);
     const s = depth(y);
+    // a train is rigid: it keeps the heading it has standing at the platform (front to back), so a
+    // kink in the track doesn't turn it; a boat steers along its route
+    const a = look.bow ? alongAngle : this.platformAngle(2 * half);
     const dir = a + Math.PI * (1 - turn);
     sp.texture = look.frames[headingIndex(dir, look.frames.length)];
     sp.position.set(x, y);

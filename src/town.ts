@@ -64,3 +64,16 @@ export function pointAt(r: [number, number][], d: number): [number, number, numb
   }
   return [r[0][0], r[0][1], 0];
 }
+
+/**
+ * Share of the way covered `f` (0–1) of the way through an arrival: a steady speed, then braking over
+ * the last `brake` share of the time, ending at rest. Leaving is the mirror: pulling away, then steady.
+ */
+export function arriveCurve(f: number, brake = 0.4): number {
+  const v = 1 / (1 - brake / 2), cruise = 1 - brake;
+  if (f <= cruise) return v * f;
+  const t = f - cruise;
+  return v * cruise + v * t - (v * t * t) / (2 * brake);
+}
+export const leaveCurve = (f: number, brake = 0.4) => 1 - arriveCurve(1 - f, brake);
+

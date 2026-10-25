@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { DWELL, MAX_DWELL, TRAVEL, nextPhase, pointAt, routeLength } from '../src/town';
+import { DWELL, MAX_DWELL, TRAVEL, arriveCurve, leaveCurve, nextPhase, pointAt, routeLength } from '../src/town';
 
 test('it comes when robots wait, stops, waits for those still walking, then leaves', () => {
   assert.equal(nextPhase('away', 5, false, false), 'away', 'nobody waiting: stays away');
@@ -38,4 +38,14 @@ test('every town map has a train or ferry route that starts at its stop and leav
     const st = Object.values<any>(t.buildings).find((b) => b.role === 'station');
     assert.ok(Math.hypot(tr.board[0] - st.door[0], tr.board[1] - st.door[1]) < 120, `${id}: robots board near the station`);
   }
+});
+
+test('trains come in at a steady speed and brake into the station; they pull away, then go steady', () => {
+  assert.equal(arriveCurve(0), 0); assert.ok(Math.abs(arriveCurve(1) - 1) < 1e-9);
+  const step = (fn: (f: number) => number, f: number) => fn(f + 0.01) - fn(f);
+  assert.ok(Math.abs(step(arriveCurve, 0) - step(arriveCurve, 0.3)) < 1e-9, 'steady at first');
+  assert.ok(step(arriveCurve, 0.98) < step(arriveCurve, 0.3) / 5, 'nearly stopped at the end');
+  assert.ok(step(leaveCurve, 0) < step(leaveCurve, 0.9) / 5, 'leaving starts slowly');
+  assert.ok(Math.abs(step(leaveCurve, 0.7) - step(leaveCurve, 0.95)) < 1e-9, 'then steady, no burst at the end');
+  assert.ok(Math.abs(leaveCurve(1) - 1) < 1e-9);
 });
