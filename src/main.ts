@@ -9,6 +9,10 @@ import { WorldBoard } from './boardview';
 import { connectLive, serviceAvailable, signedIn } from './live';
 import { TownPicker } from './picker';
 import { BADGE_LABEL } from './badges';
+import { Toasts } from './toasts';
+import { JumpBox } from './jump';
+import { NeedsBoard } from './needs';
+import { DEFAULT_SETTINGS, type Settings } from './settings';
 import type { ActivityKind } from './types';
 import type { AgentState, TownData, TownInfo } from './types';
 
@@ -85,10 +89,40 @@ async function main() {
   };
   /** Jump to a robot, in whatever town it is. */
   const goTo = async (a: AgentState) => { setView('town'); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
+  // toasts for what just happened (which kinds: ~/.agentville/settings.json), and when each robot started waiting
+  let settings: Settings = DEFAULT_SETTINGS;
+  const toasts = new Toasts($('#toasts'));
+  const waitSince = new Map<string, number>();
+  const placeOf = (a: AgentState) => { const t = towns.find((x) => x.id === a.town); return [t?.name ?? a.project, t?.world].filter(Boolean).join(' · '); };
+  /** `catchingUp`: the state came with a (re)connect, so nothing in it just happened. */
+  const noteChange = (prev: AgentState | undefined, s: AgentState, catchingUp: boolean) => {
+    const started = s.status === 'waiting' && prev?.status !== 'waiting';
+    if (started) waitSince.set(s.id, catchingUp ? s.lastActive ?? Date.now() : Date.now());
+    if (s.status !== 'waiting') { waitSince.delete(s.id); toasts.dismiss(`wait-${s.id}`); }
+    if (catchingUp) return;
+    const on = settings.toasts, dot = sprites.meta.colors[s.color], where = esc(placeOf(s));
+    const go = () => goTo(agents.get(s.id) ?? s);
+    const who = `<b>${esc(s.name)}</b>`;
+    if (on.needsYou && started) {
+      toasts.show({ key: `wait-${s.id}`, tone: 'wait', dot, title: `${who} needs you`, body: [esc(s.task ?? 'Waiting for you'), where].filter(Boolean).join('<br>'), onClick: go, seconds: 15 });
+    }
+    const r = s.result;
+    if (on.failed && r && !r.ok && FAIL_TOASTS.has(r.kind) && r.at !== prev?.result?.at) {
+      toasts.show({ key: `fail-${s.id}`, tone: 'bad', dot, title: `${who}: ${esc(RESULT_LABEL[r.kind][1])}`, body: where, onClick: go });
+    }
+    if (on.finished && !s.parentId && prev?.status === 'working' && s.status === 'idle') {
+      toasts.show({ key: `done-${s.id}`, tone: 'done', dot, title: `${who} finished`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 });
+    }
+    if (on.sessions && !s.parentId && !prev) {
+      toasts.show({ key: `came-${s.id}`, tone: 'info', dot, title: `${who} started`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 });
+    }
+  };
   /** A robot appeared or changed (live service or demo). */
-  const applyAgent = (s: AgentState) => {
-    const was = agents.get(s.id)?.town;
+  const applyAgent = (s: AgentState, catchingUp = false) => {
+    const prev = agents.get(s.id);
+    const was = prev?.town;
     agents.set(s.id, s);
+    noteChange(prev, s, catchingUp);
     // it went to another town of the same world: a train runs between them on the world map
     if (was && s.town && was !== s.town) {
       const world = (id: string) => towns.find((t) => t.id === id)?.world;
@@ -107,7 +141,14 @@ async function main() {
     for (const t of DEMO_TOWNS) { const m = await mapData(t.map); t.folders = demoFolders(m); t.land = m.land; }
     return DEMO_TOWNS;
   };
-  const removeAgent = (id: string) => { agents.delete(id); world.remove(id); };
+  const removeAgent = (id: string, catchingUp = false) => {
+    const a = agents.get(id);
+    agents.delete(id); world.remove(id);
+    waitSince.delete(id); toasts.dismiss(`wait-${id}`);
+    if (a && !a.parentId && settings.toasts.sessions && !catchingUp) {
+      toasts.show({ key: `came-${id}`, tone: 'info', dot: sprites.meta.colors[a.color], title: `<b>${esc(a.name)}</b> ended`, body: esc(placeOf(a)), seconds: 6 });
+    }
+  };
 
   // world map: the towns of one world, over the town view (button or M)
   // three levels: the planet (every world), a world map (one project's towns), a town (one repo)
@@ -174,6 +215,14 @@ async function main() {
     setView(v);
   };
 
+  // the needs-you board (under the counter) and the ⌘K jump box
+  const needs = new NeedsBoard($('#needs'), { go: goTo, open: (a) => goToSession?.(a.id) });
+  const jump = new JumpBox((t) => {
+    if (t.kind === 'robot') { const a = agents.get(t.id); if (a) goTo(a); }
+    else if (t.kind === 'town') { setTown(t.id, true); setView('town'); }
+    else { mapWorld = t.name; setView('world'); }
+  });
+
   if (live) {
     $('#mode').textContent = 'Connecting…';
     $('#t-add').style.display = 'none';
@@ -211,6 +260,7 @@ async function main() {
         const a = agents.get(id);
         if (!ok && a) log(`Couldn't open <b>${esc(a.name)}</b>'s session${appOf(a, agents) ? ` in ${esc(appOf(a, agents)!)}` : ''}`);
       },
+      settings: (s) => { settings = s; },
       status: (ok) => {
         $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off');
         // the token was renewed (or the cookie cleared): reconnecting won't help until you sign in again
@@ -253,7 +303,8 @@ async function main() {
   let lastDetails = '';
   addEventListener('keydown', (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement).closest('input, textarea, select')) return;
-    if (e.key === 'Escape' && view !== 'town') setView(down[view]);
+    if (e.key === 'Escape' && needs.isOpen) needs.close();
+    else if (e.key === 'Escape' && view !== 'town') setView(down[view]);
     else if (e.key === 'Escape' && selected) { selected = null; render(); }
     else if ((e.key === 'g' || e.key === 'G') && selected && goToSession && appOf(agents.get(selected), agents)) goToSession(selected);
     else if (e.key === 'm' || e.key === 'M') setView(up[view]);
@@ -283,11 +334,11 @@ async function main() {
       $('#details').querySelectorAll<HTMLElement>('[data-id]').forEach((el) => (el.onclick = () => select(el.dataset.id!)));
       $('#details').querySelector<HTMLButtonElement>('.go')?.addEventListener('click', () => { if (selected) goToSession?.(selected); });
     }
-    // needs-you across every town; click to jump to the first one
+    // needs-you across every town: the counter opens the board
     const all = [...agents.values()];
-    const waiting = all.filter((a) => a.status === 'waiting');
-    $('#needs').textContent = waiting.length ? `${waiting.length} need${waiting.length === 1 ? 's' : ''} you` : '';
-    $('#needs').onclick = waiting.length ? () => goTo(waiting[0]) : null;
+    needs.update(all.filter((a) => a.status === 'waiting'), (a) => waitSince.get(a.id) ?? a.lastActive ?? Date.now(), towns, sprites.meta.colors,
+      (a) => (goToSession ? appOf(a, agents) : undefined));
+    jump.update(all, towns, sprites.meta.colors);
     renderPicker();
     if (view === 'planet') planet.update({ towns, agents: [...agents.values()], current: mapWorld ?? currentWorld() });
     if (view === 'world' && mapWorld && mapStyle === 'painted') worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
@@ -431,5 +482,7 @@ const RESULT_LABEL: Record<ActivityKind, [string, string]> = {
   test: ['Tests passed', 'Tests failed'], build: ['Build passed', 'Build failed'], git: ['Git done', 'Git failed'],
   install: ['Packages installed', 'Install failed'], server: ['Server stopped', 'Server failed'], deploy: ['Deployed', 'Deploy failed'],
 };
+/** Failures worth a toast (a failed git pull or install shows on the robot, but isn't news). */
+const FAIL_TOASTS = new Set<ActivityKind>(['test', 'build', 'deploy']);
 const BACKGROUND_LABEL: Record<ActivityKind, string> = { test: 'tests', build: 'a build', git: 'git', install: 'an install', server: 'a dev server', deploy: 'a deploy' };
 

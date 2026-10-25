@@ -1,6 +1,6 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
-//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'};
+//   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'|'settings'};
 //                     the page sends {type:'alerts', on}, {type:'notify', can} and {type:'focus', id} (Go to session)
 //   GET  /*        -> the built app (dist/)
 import http from 'node:http';
@@ -15,6 +15,7 @@ import { Alerts } from './notify';
 import { focusHost } from './focus';
 import { Auth } from './auth';
 import { MAX_EVENT_BYTES, RateLimit, warnOnce } from './limits';
+import { SettingsFile } from './settings';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -27,6 +28,7 @@ const log = new EventLog(path.join(APP, 'logs'));
 const alerts = new Alerts(process.env.AGENTVILLE_ALERTS !== '0');
 const auth = new Auth();
 const rate = new RateLimit();
+const settings = new SettingsFile();
 const MAX_CLIENTS = 20; // open pages
 
 const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', 'robot.json'), 'utf8'));
@@ -60,6 +62,10 @@ const sessions: Sessions = new Sessions(maps, Object.keys(robot.colors), (msg) =
   broadcast(msg);
   sendTowns();
 });
+
+// ~/.agentville/settings.json changed: every open page follows
+settings.onChange = (value) => broadcast({ type: 'settings', settings: value });
+settings.watch();
 
 // each town map's landscape ("land" in town.json), so a world sits on a matching spot of the planet
 sessions.lands = Object.fromEntries(Object.entries(townFiles).filter(([, t]) => typeof t.land === 'string').map(([id, t]) => [id, t.land]));
@@ -160,7 +166,7 @@ server.on('upgrade', (req, socket, head) => {
   let lastFocus = 0;
   wss.handleUpgrade(req, socket, head, (ws) => {
     clients.add(ws);
-    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on }));
+    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on, settings: settings.value }));
     ws.on('message', (data) => {
       try {
         const m = JSON.parse(String(data));

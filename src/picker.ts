@@ -107,16 +107,16 @@ export class TownPicker {
 }
 
 /** The letters of q appear in s, in order. */
-function inOrder(q: string, s: string) {
+export function inOrder(q: string, s: string) {
   let i = 0;
   for (const c of s) if (c === q[i]) i++;
   return i === q.length;
 }
 
 /** The name with the matched part in bold. */
-function mark(s: string, q: string) {
+export function mark(s: string, q: string) {
   const i = q ? s.toLowerCase().indexOf(q) : -1;
   return i < 0 ? esc(s) : `${esc(s.slice(0, i))}<b>${esc(s.slice(i, i + q.length))}</b>${esc(s.slice(i + q.length))}`;
 }
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);

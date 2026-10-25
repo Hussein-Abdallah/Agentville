@@ -12,7 +12,7 @@
       <nav class="crumbs" id="crumbs" title="Planet › world › town (M goes up a level, Esc comes back down)"></nav>
       <div id="town-pick" title="Towns (one per repo), grouped by world" style="display:none"></div>
       <span class="mode" id="mode"></span>
-      <span class="needs" id="needs"></span>
+      <div id="needs-wrap"><span class="needs" id="needs" role="button"></span></div>
       <div class="controls">
         <button id="t-labels">Labels</button>
         <button id="t-paths">Paths</button>
@@ -22,6 +22,7 @@
       </div>
     </header>
     <div id="stage">
+      <div id="toasts" aria-live="polite"></div>
       <div id="worldview" hidden></div>
       <div id="boardview" hidden></div>
       <button id="wm-style" hidden title="Switch between the board (any number of towns) and the painted valley (three towns)">Painted map</button>
