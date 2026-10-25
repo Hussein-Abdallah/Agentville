@@ -8,6 +8,8 @@ import { PlanetView } from './planet';
 import { WorldBoard } from './boardview';
 import { connectLive, serviceAvailable, signedIn } from './live';
 import { TownPicker } from './picker';
+import { BADGE_LABEL } from './badges';
+import type { ActivityKind } from './types';
 import type { AgentState, TownData, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
@@ -392,6 +394,9 @@ function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo
     a.project ? row('Town', esc(a.project)) : '',
     row('Where', esc(building)),
     a.status !== 'idle' && a.task ? row(a.status === 'waiting' ? 'Wants' : 'Doing', esc(a.task)) : '',
+    a.activity ? row('Running', esc(BADGE_LABEL[a.activity])) : '',
+    a.result ? row('Last command', `<span class="res ${a.result.ok ? 'ok' : 'bad'}">${a.result.ok ? '✓' : '✗'}</span> ${esc(RESULT_LABEL[a.result.kind][a.result.ok ? 0 : 1])} · ${ago(a.result.at)}`) : '',
+    a.background?.length ? row('In background', esc([...new Set(a.background)].map((k) => BACKGROUND_LABEL[k]).join(', '))) : '',
     parent ? row('Helper of', `<a data-id="${parent.id}">${esc(parent.name)}</a>`) : '',
     helpers.length ? row('Helpers', helpers.map((h) => `<a data-id="${h.id}">${esc(h.name)}</a>`).join(', ')) : '',
     a.startedAt ? row('Started', ago(a.startedAt)) : '',
@@ -421,3 +426,10 @@ main().catch((e) => {
   console.error(e);
   document.body.innerHTML = `<pre style="color:#fff;padding:20px">Agentville failed to start:\n${e?.message ?? e}</pre>`;
 });
+
+const RESULT_LABEL: Record<ActivityKind, [string, string]> = {
+  test: ['Tests passed', 'Tests failed'], build: ['Build passed', 'Build failed'], git: ['Git done', 'Git failed'],
+  install: ['Packages installed', 'Install failed'], server: ['Server stopped', 'Server failed'], deploy: ['Deployed', 'Deploy failed'],
+};
+const BACKGROUND_LABEL: Record<ActivityKind, string> = { test: 'tests', build: 'a build', git: 'git', install: 'an install', server: 'a dev server', deploy: 'a deploy' };
+

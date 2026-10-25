@@ -6,6 +6,8 @@ import { friendlyTask, isPlanTool } from './friendly';
 import { applyTodos, currentTodo } from './todos';
 import { contextUsage, contextWindow, readHead, safeTranscript, taskFiles } from './transcript';
 import { appName, hostFrom, type Host } from './focus';
+import { RESULT_TEXT, activityOf } from './activity';
+import type { ActivityKind } from '../src/types';
 import { Worlds } from './worlds';
 import { TownMaps } from './townmaps';
 import { BuildingStore, type Area } from './buildings';
@@ -86,12 +88,17 @@ interface Session {
   host: Host;
   /** status and task before a compaction, to go back to afterwards */
   preCompact?: { status: AgentState['status']; task?: string };
+  /** meaningful commands running now, by tool call id */
+  running: Running;
 }
+
+/** Town services: meaningful commands running, by tool call id (bg: started in the background). */
+type Running = Map<string, { kind: ActivityKind; bg: boolean }>;
 
 interface Pending { toolUseId?: string; type?: string; desc: string; t: number }
 
 /** A subagent's robot: like a session robot, but its events carry the parent's session id plus an agent_id. */
-interface Helper { state: AgentState; session: string; root: string; agentType?: string; lastSeen: number; lastMove: number; preWait?: string }
+interface Helper { state: AgentState; session: string; root: string; agentType?: string; lastSeen: number; lastMove: number; preWait?: string; running: Running }
 
 export type Emit = (msg: { type: 'agent'; state: AgentState } | { type: 'remove'; id: string } | { type: 'log'; html: string }
   | { type: 'needs'; state: AgentState; project: string }) => void;
@@ -238,6 +245,7 @@ export class Sessions {
         // finished: gather at the plaza (watching the tree) until the next prompt
         st.status = 'idle';
         st.task = undefined;
+        delete st.activity; s.running.clear(); // background commands (st.background) keep running
         st.building = this.L(s.root).plaza ?? st.building;
         break;
       case 'SubagentStop': // without an agent_id: the oldest helper finished
@@ -247,7 +255,44 @@ export class Sessions {
         return;
     }
     this.readContext(s, ev);
-    return this.settle(st, s, s.project, e, was, before);
+    const note = this.service(st, s.running, e);
+    return this.settle(st, s, s.project, e, was, before, note);
+  }
+
+  /**
+   * Town services: a badge while a meaningful command runs (tests, a build, git…), a pass/fail flag
+   * when it ends, a lamp while ones started in the background run. Returns a line for the history.
+   */
+  private service(st: AgentState, running: Running, e: HookEvent): string | undefined {
+    const ev = e.hook_event_name, id = String(e.tool_use_id ?? '');
+    if (ev === 'PreToolUse') {
+      // stopping a background command (Claude Code's KillShell / TaskStop): one lamp fewer
+      if (/^(KillShell|KillBash|TaskStop)$/.test(e.tool_name ?? '') && st.background?.length) {
+        st.background = st.background.slice(1);
+        if (!st.background.length) delete st.background;
+      }
+      if (e.tool_name !== 'Bash') return;
+      const kind = activityOf(e.tool_input?.command);
+      if (!kind) return;
+      running.set(id, { kind, bg: e.tool_input?.run_in_background === true });
+      st.activity = kind;
+      delete st.result;
+      return;
+    }
+    if (ev !== 'PostToolUse' && ev !== 'PostToolUseFailure') return;
+    const r = running.get(id);
+    if (!r) return;
+    running.delete(id);
+    const still = [...running.values()].at(-1);
+    if (still) st.activity = still.kind; else delete st.activity;
+    if (ev === 'PostToolUse' && r.bg) {
+      st.background = [...(st.background ?? []), r.kind];
+      return 'Left running in the background';
+    }
+    if (ev === 'PostToolUseFailure' && e.is_interrupt === true) return 'Stopped';
+    const ok = ev === 'PostToolUse';
+    st.result = { kind: r.kind, ok, at: Date.now() };
+    return RESULT_TEXT[r.kind][ok ? 0 : 1];
   }
 
   /** The app the session runs in (sent by the hook as headers) and its transcript. */
@@ -314,7 +359,7 @@ export class Sessions {
   }
 
   /** After an event: needs-you alert, history entry for the details panel, broadcast. */
-  private settle(st: AgentState, t: { preWait?: string }, project: string, e: HookEvent, was: string, before?: string) {
+  private settle(st: AgentState, t: { preWait?: string }, project: string, e: HookEvent, was: string, before?: string, service?: string) {
     const ev = e.hook_event_name;
     if (st.status === 'waiting' && was !== 'waiting') {
       t.preWait = before;
@@ -325,6 +370,7 @@ export class Sessions {
     // history: new requests, changed tasks, needs-you, failed / not allowed, finished
     const step = (was === 'waiting' ? t.preWait : before) ?? e.tool_name ?? 'a step';
     const note = st.status === 'waiting' && was !== 'waiting' ? `Needs you: ${st.task ?? 'waiting'}`
+      : service ? service
       : ev === 'Stop' ? 'Finished' : ev === 'UserPromptSubmit' ? 'New request'
       : ev === 'PostToolUseFailure' ? `Failed: ${step}`
       : ev === 'PermissionDenied' ? `Not allowed: ${e.tool_name ?? 'a step'}`
@@ -386,7 +432,7 @@ export class Sessions {
       default:
         return;
     }
-    return this.settle(st, h, st.project ?? s.project, e, was, before);
+    return this.settle(st, h, st.project ?? s.project, e, was, before, this.service(st, h.running, e));
   }
 
   private moveTo(s: Session, b?: string) {
@@ -409,7 +455,7 @@ export class Sessions {
     const s: Session = {
       state: { id: e.session_id, name, color, building: this.L(root).plaza ?? this.L(root).root, status: 'idle', project, town: root, startedAt: Date.now() },
       root, project, lastSeen: Date.now(), lastMove: 0, helpers: new Map(), pending: [], helperSeq: 1, endedAgents: new Set(),
-      home: dir, readAt: 0, host: {},
+      home: dir, readAt: 0, host: {}, running: new Map(),
     };
     this.sessions.set(e.session_id, s);
     this.emit({ type: 'log', html: `<b>${name}</b> started in ${esc(project)}` });
@@ -457,7 +503,7 @@ export class Sessions {
       id, name: `${s.state.name}·${++s.helperSeq}`, color: s.state.color, building: s.state.building, status: 'working',
       task: (desc ?? 'Helping out').slice(0, 42), title: desc?.slice(0, 80), parentId: s.state.id, project: s.project, town: s.root, startedAt: Date.now(),
     };
-    const h: Helper = { state, session: s.state.id, root: s.root, agentType, lastSeen: Date.now(), lastMove: 0 };
+    const h: Helper = { state, session: s.state.id, root: s.root, agentType, lastSeen: Date.now(), lastMove: 0, running: new Map() };
     s.helpers.set(agentId, id);
     this.helpers.set(id, h);
     this.emit({ type: 'log', html: `<b>${s.state.name}</b> started helper <b>${state.name}</b>` });

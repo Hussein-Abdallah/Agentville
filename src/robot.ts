@@ -2,7 +2,10 @@ import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import type { AgentState, TownData } from './types';
 import { angleDiff, rowCenterYaw, rowForYaw, yawFromScreen, type Anim, type RobotFrames, type RobotSprites } from './sprites';
 import { pathBetween, stationOf } from './town';
+import { drawActivity, drawResult } from './badges';
 
+/** how long a pass/fail flag stays (s) */
+const RESULT_SECONDS = 6;
 const TURN_RATE = 9; // how fast the facing angle follows movement (per second)
 const HYSTERESIS = (10 * Math.PI) / 180; // extra angle needed before switching sprite direction
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
@@ -33,6 +36,8 @@ export class Robot {
   tagSize = { w: 0, h: 0 };
   /** lives in the world's top bubble layer so bubbles never hide behind other robots */
   readonly bubble = new Container();
+  /** town services: the activity badge / result flag beside the robot (lives in the bubble layer) */
+  readonly badge = new Graphics();
   bubbleSize = { w: 0, h: 0 };
   lastFocus = 0;
   private bubbleKey = '';
@@ -212,7 +217,23 @@ export class Robot {
     this.bubble.position.set(this.view.x, this.y - this.town.robotHeight * s - 14 * s);
     this.bubble.alpha = this.alpha;
     this.bubble.visible = !!this.bubbleKey;
+
+    // town services: a badge while a meaningful command runs, then a pass/fail flag for a few seconds
+    this.badgeClock += dt;
+    const res = this.state.result, age = res ? (Date.now() - res.at) / 1000 : Infinity;
+    const g = this.badge.clear();
+    const shown = this.mode === 'present' || this.mode === 'walking';
+    if (shown && this.state.activity) drawActivity(g, this.state.activity, this.badgeClock);
+    else if (shown && res && age < RESULT_SECONDS) drawResult(g, res.ok);
+    // the flag pops in, then fades out
+    const pop = res && !this.state.activity ? Math.min(1, age * 5) : 1;
+    const fade = res && !this.state.activity ? Math.min(1, (RESULT_SECONDS - age) / 0.6) : 1;
+    this.badge.scale.set(s * (0.6 + 0.4 * pop) * (pop < 1 ? 1.15 : 1));
+    this.badge.position.set(this.view.x + 30 * s, this.y - this.town.robotHeight * s * 0.62);
+    this.badge.alpha = this.alpha * Math.max(0, fade);
+    this.badge.visible = g.bounds.width > 0;
   }
+  private badgeClock = Math.random() * 10;
 
   /**
    * The name tag; once the context is half full (or being compacted) a thin bar inside it shows how
@@ -234,6 +255,11 @@ export class Robot {
       else bar.roundRect(x, y, Math.max(2, bw * f), 2, 1).fill({ color: meterColor(f) });
       this.tag.addChild(bar);
     }
+    // a command left running in the background (a dev server…): a glowing lamp on the tag
+    if (this.state.background?.length) {
+      const lamp = new Graphics().circle(w / 2 - 1, -h / 2 + 2, 5).fill({ color: 0xffe066, alpha: 0.35 }).circle(w / 2 - 1, -h / 2 + 2, 3).fill(0xffd43b);
+      this.tag.addChild(lamp);
+    }
     this.tagSize = { w, h };
   }
 
@@ -241,7 +267,7 @@ export class Robot {
   private tagKey() {
     const c = this.state.context;
     const f = c && c.max ? Math.min(1, c.used / c.max) : 0;
-    return `${this.state.name}|${c?.compacting ? 'c' : f >= 0.5 ? Math.round(f * 50) : ''}`;
+    return `${this.state.name}|${c?.compacting ? 'c' : f >= 0.5 ? Math.round(f * 50) : ''}|${this.state.background?.length ?? 0}`;
   }
   private shownTag = '';
 

@@ -32,7 +32,16 @@ export interface AgentState {
   todos?: TodoItem[];
   /** the app the session runs in ("Terminal", "VS Code", "Claude"…), when the hooks report it; Go to session opens it */
   app?: string;
+  /** a meaningful command running now (tests, a build…): a badge by the robot */
+  activity?: ActivityKind;
+  /** how the last one ended: a pass/fail flag for a few seconds after `at` */
+  result?: { kind: ActivityKind; ok: boolean; at: number };
+  /** commands left running in the background (a dev server…): a lamp on the name tag */
+  background?: ActivityKind[];
 }
+
+/** Kinds of meaningful shell commands (town services). */
+export type ActivityKind = 'test' | 'build' | 'git' | 'install' | 'server' | 'deploy';
 
 export interface ContextInfo {
   /** tokens in the context after the latest reply (0 right after a compaction, until the next reply) */

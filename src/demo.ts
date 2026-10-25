@@ -1,4 +1,4 @@
-import type { AgentState, TownData, TownInfo } from './types';
+import type { ActivityKind, AgentState, TownData, TownInfo } from './types';
 import { plazaOf, stationOf } from './town';
 
 /**
@@ -8,14 +8,14 @@ import { plazaOf, stationOf } from './town';
 const NAMES = ['Atlas', 'Byte', 'Cleo', 'Dex', 'Echo', 'Fern', 'Gus', 'Iris'];
 /** What a demo robot does, by the folder of the building it's at. */
 const TASKS: Record<string, string[]> = {
-  'root files': ['Updating dependencies', 'Editing the README', 'Changing project config'],
-  'commands & tools': ['Running tests', 'Checking the page in the browser', 'Running the build'],
+  'root files': ['Updating dependencies', 'Editing the README', 'Saving a commit', 'Installing packages'],
+  'commands & tools': ['Running tests', 'Starting the dev server', 'Running the build', 'Deploying the app'],
   auth: ['Fixing the login flow', 'Rotating auth tokens', 'Reading the session code'],
   ui: ['Polishing the UI', 'Editing the login form', 'Styling the dashboard'],
   db: ['Syncing data', 'Changing the database'],
   docs: ['Writing docs', 'Reading the API docs'],
   analytics: ['Building the usage report', 'Reading analytics events'],
-  ci: ['Running the build', 'Fixing CI'],
+  ci: ['Running the build', 'Running tests', 'Deploying the app'],
   cache: ['Warming the cache', 'Running tests'],
   webhooks: ['Wiring a webhook', 'Retrying events'],
   prototypes: ['Prototyping an idea', 'Trying a new layout'],
@@ -84,6 +84,7 @@ export class Demo {
   private send(a: AgentState) {
     a.lastActive = Date.now();
     if (!a.parentId) this.progress(a);
+    this.service(a);
     const text = a.status === 'waiting' ? 'Needs you: approval' : a.status === 'idle' ? 'Finished' : a.task;
     if (text && a.recent?.[0]?.text !== text) a.recent = [{ t: a.lastActive, text }, ...(a.recent ?? [])].slice(0, 8);
     this.emit({ ...a });
@@ -110,6 +111,22 @@ export class Demo {
     if (cur >= 0) a.todos[cur].status = 'completed';
     const next = a.todos.findIndex((t) => t.status === 'pending');
     if (next >= 0) a.todos[next].status = 'in_progress';
+  }
+
+  /**
+   * Pretend town services: a task like "Running tests" shows its badge; when the robot moves on, the
+   * command ends (mostly passing), and a dev server is sometimes left running in the background.
+   */
+  private service(a: AgentState) {
+    const kind = demoKind(a.status === 'working' ? a.task : undefined);
+    if (a.activity && a.activity !== kind) {
+      const ended = a.activity;
+      delete a.activity;
+      if (ended === 'server' && Math.random() < 0.5) a.background = ['server'];
+      else a.result = { kind: ended, ok: Math.random() < 0.8, at: Date.now() };
+    }
+    if (kind) { a.activity = kind; delete a.result; }
+    if (a.background && Math.random() < 0.1) delete a.background;
   }
 
   /** Buildings a robot can work at in a town: those with a demo folder. */
@@ -191,3 +208,15 @@ export class Demo {
     setTimeout(() => this.loop(), 500);
   }
 }
+
+/** The town-services kind of a demo task. */
+function demoKind(task?: string): ActivityKind | undefined {
+  if (!task) return;
+  if (/tests/i.test(task)) return 'test';
+  if (/build|CI/i.test(task)) return 'build';
+  if (/commit/i.test(task)) return 'git';
+  if (/dependencies|packages/i.test(task)) return 'install';
+  if (/dev server/i.test(task)) return 'server';
+  if (/deploy/i.test(task)) return 'deploy';
+}
+

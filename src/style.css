@@ -56,6 +56,9 @@ aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; co
 .meter.high span { background: #ff6b5e; }
 .meter.compact span { background: repeating-linear-gradient(90deg, #8fd3ff 0 8px, #4c8fbf 8px 16px); animation: compacting 0.8s linear infinite; background-size: 32px 100%; }
 @keyframes compacting { to { background-position: 32px 0; } }
+#details .res { display: inline-block; width: 15px; height: 15px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; text-align: center; line-height: 15px; }
+#details .res.ok { background: #22c55e; }
+#details .res.bad { background: #ef4444; }
 #details .sub { font-size: 11.5px; color: #959ec7; margin-top: -3px; }
 .todo-n { font-size: 10.5px; font-weight: 600; color: #a8b5ff; background: #222a4d; padding: 1px 6px; border-radius: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ttl + .todo-n { margin-left: 0; }

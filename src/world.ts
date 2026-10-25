@@ -146,7 +146,7 @@ export class World {
       this.robots.set(state.id, nr);
       this.robotLayer.addChild(nr.view);
       this.tagLayer.addChild(nr.tag);
-      this.bubbleLayer.addChild(nr.bubble);
+      this.bubbleLayer.addChild(nr.bubble, nr.badge);
     }
     this.onChange?.();
   }
@@ -161,7 +161,7 @@ export class World {
 
   /** Remove every robot at once (the page is switching towns). */
   clear() {
-    for (const r of this.robots.values()) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.tag.destroy({ children: true }); }
+    for (const r of this.robots.values()) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.badge.destroy(); r.tag.destroy({ children: true }); }
     this.robots.clear();
     this.onChange?.();
   }
@@ -259,7 +259,7 @@ export class World {
     }
     for (const [id, r] of this.robots) {
       r.tick(dt, this.clock, SLOTS[r.slot % SLOTS.length]);
-      if (r.mode === 'gone' && r.view.alpha < 0.02) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.tag.destroy({ children: true }); this.robots.delete(id); this.onChange?.(); }
+      if (r.mode === 'gone' && r.view.alpha < 0.02) { r.view.destroy({ children: true }); r.bubble.destroy({ children: true }); r.badge.destroy(); r.tag.destroy({ children: true }); this.robots.delete(id); this.onChange?.(); }
     }
     // building glows: green while working, orange (with ripples) when a robot needs you
     this.ripples.clear();

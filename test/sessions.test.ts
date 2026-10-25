@@ -74,7 +74,7 @@ test('history: requests, tasks, needs-you, failures and finishing, newest first,
   t.send(r, { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' });
   const st = t.send(r, { hook_event_name: 'Stop' });
   assert.deepEqual(st.recent.map((x: any) => x.text).reverse(),
-    ['New request', 'Reading login.ts', 'Run the unit tests', 'Needs you: Wants to use Bash', 'Failed: Run the unit tests', 'Finished']);
+    ['New request', 'Reading login.ts', 'Run the unit tests', 'Needs you: Wants to use Bash', 'Tests failed', 'Finished']);
   for (let i = 0; i < 12; i++) t.tool(r, 'Bash', { command: 'x', description: `Step ${i}` });
   const last = t.robot()!;
   assert.equal(last.recent!.length, 8);
