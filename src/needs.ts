@@ -68,6 +68,7 @@ export class NeedsBoard {
         <div class="mid">
           <div class="nb-top"><b>${esc(a.name)}</b>${a.title ? `<span class="ttl">${esc(a.title)}</span>` : ''}<span class="nb-age">${waited(since(a))}</span></div>
           <div class="nb-want">${esc(a.task ?? 'Waiting for you')}</div>
+          ${a.ask ? `<div class="nb-ask">${esc(a.ask)}</div>` : ''}
           ${where ? `<div class="nb-where">${esc(where)}</div>` : ''}
         </div>
         ${via ? `<button class="nb-open" title="Bring the session to the front to answer it">Open in ${esc(via)}</button>` : ''}

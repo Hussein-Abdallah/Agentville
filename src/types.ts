@@ -12,6 +12,8 @@ export interface AgentState {
   status: AgentStatus;
   /** friendly text for the speech bubble */
   task?: string;
+  /** while waiting: exactly what for (the question, the command, the file, the end of Claude's last reply) */
+  ask?: string;
   /** session title (Claude desktop) or the first prompt */
   title?: string;
   /** set for subagents: the parent session id */

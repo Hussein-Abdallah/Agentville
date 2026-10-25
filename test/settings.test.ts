@@ -7,18 +7,18 @@ import { SettingsFile } from '../server/settings';
 import { DEFAULT_SETTINGS } from '../src/settings';
 import { tmpDir } from './support';
 
-test('a missing file is written with the defaults (needs you, failures and finished turns on)', () => {
+test('a missing file is written with the defaults (needs you and failures on)', () => {
   const file = path.join(tmpDir('settings'), 'sub', 'settings.json');
   const s = new SettingsFile(file);
   assert.deepEqual(s.value, DEFAULT_SETTINGS);
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), DEFAULT_SETTINGS);
-  assert.deepEqual(s.value.toasts, { needsYou: true, failed: true, finished: true, sessions: false });
+  assert.deepEqual(s.value.toasts, { needsYou: true, failed: true, finished: false, sessions: false });
 });
 
 test('what the file sets wins; missing or wrong values fall back to the defaults', () => {
   const file = path.join(tmpDir('settings'), 'settings.json');
-  fs.writeFileSync(file, JSON.stringify({ toasts: { finished: false, sessions: true, failed: 'no', extra: true }, other: 1 }));
-  assert.deepEqual(new SettingsFile(file).value.toasts, { needsYou: true, failed: true, finished: false, sessions: true });
+  fs.writeFileSync(file, JSON.stringify({ toasts: { finished: true, needsYou: false, failed: 'no', extra: true }, other: 1 }));
+  assert.deepEqual(new SettingsFile(file).value.toasts, { needsYou: false, failed: true, finished: true, sessions: false });
 });
 
 test('a file that does not parse is left alone and the defaults are used', () => {

@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentState, TownInfo } from '../src/types';
-import { friendlyTask, isPlanTool } from './friendly';
+import { friendlyTask, isPlanTool, lastWords, waitingFor } from './friendly';
 import { applyTodos, currentTodo } from './todos';
 import { contextUsage, contextWindow, readHead, safeTranscript, taskFiles } from './transcript';
 import { appName, hostFrom, type Host } from './focus';
@@ -72,6 +72,8 @@ interface Session {
   todo?: string;
   /** task before it started waiting, so "Failed: …" names the real step */
   preWait?: string;
+  /** the end of Claude's last reply (Stop), shown when it waits for yours */
+  lastSaid?: string;
   helpers: Map<string, string>; // subagent id (agent_id in hook events) -> helper robot id
   /** Agent/Task calls whose subagent hasn't shown up yet (oldest first) */
   pending: Pending[];
@@ -232,19 +234,29 @@ export class Sessions {
         break;
       case 'PermissionRequest':
         st.status = 'waiting';
-        st.task = e.tool_name ? `Wants to use ${e.tool_name}` : 'Needs permission';
+        Object.assign(st, waitingFor(e));
         break;
       case 'Notification': {
         const t = e.notification_type ?? '';
-        const msg = (typeof e.message === 'string' ? e.message : '').toLowerCase();
-        if (t === 'permission_prompt' || msg.includes('permission')) { st.status = 'waiting'; st.task = 'Needs permission'; }
-        else if (t === 'idle_prompt' || msg.includes('waiting for your input')) { st.status = 'waiting'; st.task = 'Waiting for your reply'; }
+        const text = typeof e.message === 'string' ? e.message : '';
+        const msg = text.toLowerCase();
+        if (t === 'permission_prompt' || msg.includes('permission')) {
+          // the PermissionRequest just before already said exactly what it wants
+          if (st.status !== 'waiting' || !st.ask) {
+            st.status = 'waiting';
+            const tool = /permission to use (\S+)/i.exec(text)?.[1];
+            Object.assign(st, waitingFor({ tool_name: tool }));
+          }
+        } else if (t === 'idle_prompt' || msg.includes('waiting for your input')) {
+          st.status = 'waiting'; st.task = 'Waiting for your reply'; st.ask = s.lastSaid;
+        }
         break;
       }
       case 'Stop':
         // finished: gather at the plaza (watching the tree) until the next prompt
         st.status = 'idle';
         st.task = undefined;
+        s.lastSaid = lastWords(e.last_assistant_message);
         delete st.activity; s.running.clear(); // background commands (st.background) keep running
         st.building = this.L(s.root).plaza ?? st.building;
         break;
@@ -361,6 +373,7 @@ export class Sessions {
   /** After an event: needs-you alert, history entry for the details panel, broadcast. */
   private settle(st: AgentState, t: { preWait?: string }, project: string, e: HookEvent, was: string, before?: string, service?: string) {
     const ev = e.hook_event_name;
+    if (st.status !== 'waiting') delete st.ask;
     if (st.status === 'waiting' && was !== 'waiting') {
       t.preWait = before;
       this.emit({ type: 'log', html: `<b>${st.name}</b> needs you${project ? ` in ${esc(project)}` : ''}` });
@@ -424,7 +437,7 @@ export class Sessions {
         break;
       case 'PermissionRequest':
         st.status = 'waiting';
-        st.task = e.tool_name ? `Wants to use ${e.tool_name}` : 'Needs permission';
+        Object.assign(st, waitingFor(e));
         break;
       case 'PermissionDenied':
         st.status = 'working';

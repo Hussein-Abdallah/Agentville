@@ -104,7 +104,7 @@ async function main() {
     const go = () => goTo(agents.get(s.id) ?? s);
     const who = `<b>${esc(s.name)}</b>`;
     if (on.needsYou && started) {
-      toasts.show({ key: `wait-${s.id}`, tone: 'wait', dot, title: `${who} needs you`, body: [esc(s.task ?? 'Waiting for you'), where].filter(Boolean).join('<br>'), onClick: go, seconds: 15 });
+      toasts.show({ key: `wait-${s.id}`, tone: 'wait', dot, title: `${who} needs you`, body: [esc(s.task ?? 'Waiting for you'), s.ask ? `<i>${esc(s.ask)}</i>` : '', where].filter(Boolean).join('<br>'), onClick: go, seconds: 15 });
     }
     const r = s.result;
     if (on.failed && r && !r.ok && FAIL_TOASTS.has(r.kind) && r.at !== prev?.result?.at) {
@@ -248,7 +248,7 @@ async function main() {
         if (!canNotify()) return;
         const where = [project, st.title].filter(Boolean).join(' · ');
         // silent: the service plays the sound; the tag merges copies from several open pages
-        const n = new Notification(`${st.name} needs you`, { body: (st.task ?? 'Waiting for you') + (where ? `\n${where}` : ''), tag: `agentville-${st.id}`, silent: true });
+        const n = new Notification(`${st.name} needs you`, { body: [st.task ?? 'Waiting for you', st.ask, where].filter(Boolean).join('\n'), tag: `agentville-${st.id}`, silent: true });
         // straight to the session when we know its app (to answer it there); else to this page
         n.onclick = () => {
           const a = agents.get(st.id) ?? st;
@@ -445,6 +445,7 @@ function details(a: AgentState, all: AgentState[], world: World, town?: TownInfo
     a.project ? row('Town', esc(a.project)) : '',
     row('Where', esc(building)),
     a.status !== 'idle' && a.task ? row(a.status === 'waiting' ? 'Wants' : 'Doing', esc(a.task)) : '',
+    a.status === 'waiting' && a.ask ? row(a.task === 'Waiting for your reply' ? 'Last said' : 'What', esc(a.ask)) : '',
     a.activity ? row('Running', esc(BADGE_LABEL[a.activity])) : '',
     a.result ? row('Last command', `<span class="res ${a.result.ok ? 'ok' : 'bad'}">${a.result.ok ? '✓' : '✗'}</span> ${esc(RESULT_LABEL[a.result.kind][a.result.ok ? 0 : 1])} · ${ago(a.result.at)}`) : '',
     a.background?.length ? row('In background', esc([...new Set(a.background)].map((k) => BACKGROUND_LABEL[k]).join(', '))) : '',

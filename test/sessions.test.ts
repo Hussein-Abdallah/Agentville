@@ -74,7 +74,7 @@ test('history: requests, tasks, needs-you, failures and finishing, newest first,
   t.send(r, { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' });
   const st = t.send(r, { hook_event_name: 'Stop' });
   assert.deepEqual(st.recent.map((x: any) => x.text).reverse(),
-    ['New request', 'Reading login.ts', 'Run the unit tests', 'Needs you: Wants to use Bash', 'Tests failed', 'Finished']);
+    ['New request', 'Reading login.ts', 'Run the unit tests', 'Needs you: Wants to run a command', 'Tests failed', 'Finished']);
   for (let i = 0; i < 12; i++) t.tool(r, 'Bash', { command: 'x', description: `Step ${i}` });
   const last = t.robot()!;
   assert.equal(last.recent!.length, 8);
@@ -96,11 +96,11 @@ test('one needs-you alert per wait', () => {
   t.prompt(r);
   t.send(r, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' });
   t.send(r, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission' });
-  assert.deepEqual(needs(), ['Wants to use Bash'], 'a request and its notification are one wait');
+  assert.deepEqual(needs(), ['Wants to run a command'], 'a request and its notification are one wait');
   t.send(r, { hook_event_name: 'PostToolUse', tool_name: 'Bash' });
   t.send(r, { hook_event_name: 'Stop' });
   t.send(r, { hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
-  assert.deepEqual(needs(), ['Wants to use Bash', 'Waiting for your reply']);
+  assert.deepEqual(needs(), ['Wants to run a command', 'Waiting for your reply']);
 });
 
 test("the project comes from the session's start folder in its transcript (only under the Claude folder)", (t) => {

@@ -9,7 +9,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  toasts: {needsYou: true, failed: true, finished: true, sessions: false},
+  toasts: {needsYou: true, failed: true, finished: false, sessions: false},
 };
 
 /** The defaults, with whatever `raw` sets right. */

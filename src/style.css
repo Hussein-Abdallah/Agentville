@@ -254,3 +254,5 @@ header .needs { cursor: pointer; }
 .jp-kind.w { color: #7ee2b5; background: #1d3d31; }
 .jp-none { padding: 12px; color: #7880a8; font-size: 13px; }
 .jp-foot { display: flex; gap: 14px; padding: 7px 14px; border-top: 1px solid #2c3462; color: #7880a8; font-size: 11px; }
+.nb-ask { color: #c9d0f2; font-size: 12px; margin-top: 4px; padding: 3px 8px; background: #10142b; border-left: 2px solid #c2410c; border-radius: 4px; overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.toast .tb i { font-style: normal; color: #c9d0f2; }

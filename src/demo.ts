@@ -60,6 +60,16 @@ function sampleWorld(world: string, repos: string[]): TownInfo[] {
     spot: i < maps.length, primary: i === 0, folders: {}, names: {},
   }));
 }
+/** What a waiting demo robot wants, as the live service words it. */
+const ASKS: { task: string; ask: string }[] = [
+  { task: 'Wants to run a command', ask: 'Run the unit tests: npm test' },
+  { task: 'Wants to run a command', ask: 'Push the branch: git push origin feature/search' },
+  { task: 'Has a question', ask: 'Should the search box also look through archived projects?' },
+  { task: 'Wants to edit a file', ask: 'src/auth/session.ts' },
+  { task: 'Wants to open a web page', ask: 'https://docs.example.com/api/rate-limits' },
+  { task: 'Waiting for your reply', ask: 'The migration is ready. Do you want me to run it on staging first?' },
+  { task: 'Wants you to approve a plan', ask: 'Move billing to the new invoices table in three steps' },
+];
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 
 export class Demo {
@@ -83,6 +93,7 @@ export class Demo {
   /** Emits an update, stamping the activity time and history the details panel shows (as the service does). */
   private send(a: AgentState) {
     a.lastActive = Date.now();
+    if (a.status !== 'waiting') delete a.ask;
     if (!a.parentId) this.progress(a);
     this.service(a);
     const text = a.status === 'waiting' ? 'Needs you: approval' : a.status === 'idle' ? 'Finished' : a.task;
@@ -181,6 +192,7 @@ export class Demo {
         this.timers.set(id, now + 8000 + Math.random() * 8000);
       } else if (r < 0.14) {
         a.status = 'waiting';
+        Object.assign(a, pick(ASKS));
         this.log(`<b>${a.name}</b> needs your approval`);
         this.timers.set(id, now + 25000);
       } else if (r < 0.2 && !a.parentId && [...this.agents.values()].filter((x) => x.parentId === id).length < 1) {
