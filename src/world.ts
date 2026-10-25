@@ -184,6 +184,9 @@ export class World {
     return Math.floor(Math.random() * n);
   }
 
+  /** A robot says a short line (if it's in this town). */
+  say(id: string, text: string, seconds?: number) { this.robots.get(id)?.say(text, seconds); }
+
   /** Remove every robot at once (the page is switching towns). */
   clear() {
     this.wake();

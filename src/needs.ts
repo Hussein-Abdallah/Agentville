@@ -76,7 +76,9 @@ export class NeedsBoard {
     }).join('');
     if (html === this.key) return;
     this.key = html;
+    const top = this.list.scrollTop;
     this.list.innerHTML = `<div class="nb-head">Needs you</div>${html}`;
+    this.list.scrollTop = top; // the waiting times tick: keep where you scrolled to
   }
 }
 

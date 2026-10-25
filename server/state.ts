@@ -728,6 +728,29 @@ export class Sessions {
     return p;
   }
 
+  /**
+   * You picked another town map for a repo (Settings): its robots start over at the plaza of the new one.
+   * Nothing is sent: send the towns list first (so pages load the new map), then the robots (`snapshot`).
+   */
+  setTownMap(root: string, map: string): boolean {
+    const p = this.projects.get(root);
+    if (!p || p.config.town || p.townMap === map || !this.townMaps.set(root, map)) return false;
+    this.projects.delete(root); // laid out again on the new map (with what was remembered on it)
+    const L = this.L(root);
+    const home = L.plaza ?? L.root;
+    for (const s of this.sessions.values()) if (s.root === root) { s.state.building = home; s.lastWork = undefined; s.lastMove = Date.now(); }
+    for (const h of this.helpers.values()) if (h.root === root) { h.state.building = home; h.lastMove = Date.now(); }
+    return true;
+  }
+
+  /** You named one of a town's buildings (Settings); an empty name goes back to the map's. */
+  renameBuilding(root: string, building: string, name: string): boolean {
+    const p = this.projects.get(root);
+    if (!p || typeof name !== 'string' || !this.maps[p.townMap]?.some((b) => b.id === building)) return false;
+    this.store.setName(root, p.townMap, building, name.replace(/[<>&"'`\\]/g, ''));
+    return true;
+  }
+
   /** A known town's world (with its agentville.json "world"); for other repos, the automatic one. */
   private worldOfRoot(root: string) {
     return this.worlds.worldOf(root, this.projects.get(root)?.config.world);
@@ -766,7 +789,7 @@ export class Sessions {
       for (const [f, b] of Object.entries(p.config.folders)) if (this.used.has(`${root}\0${f}`)) add(b, f);
       for (const [a, x] of p.areas) add(x.building, a);
       return { id: root, name: path.basename(root), world: this.worlds.worldOf(root, p.config.world), map: p.townMap, spot: false, primary: false,
-        land: this.lands[p.townMap], folders, names: { ...p.config.names } };
+        land: this.lands[p.townMap], folders, names: { ...p.config.names, ...this.store.names(root, p.townMap) }, mapPinned: !!p.config.town || undefined };
     });
     // on the world map, each town map's spot goes to the town that got that map first in its world
     // and each world's first town (got its map earliest) is its primary town

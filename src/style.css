@@ -278,3 +278,60 @@ header .needs, header button, .crumbs button { white-space: nowrap; }
 header .controls { flex-shrink: 0; }
 #town-pick { min-width: 0; flex-shrink: 1; }
 .tp-input { width: clamp(110px, 16vw, 220px); }
+
+/* clock */
+#clock { font-size: 13px; color: #a8b5ff; font-variant-numeric: tabular-nums; padding: 0 4px; align-self: center; }
+
+/* Settings */
+#settings { position: fixed; inset: 0; z-index: 45; background: rgba(5, 7, 18, .55); display: flex; justify-content: center; align-items: flex-start; padding-top: 8vh; }
+#settings[hidden] { display: none; }
+.st-panel { width: min(620px, 94vw); max-height: 82vh; display: flex; flex-direction: column; background: #151a35; border: 1px solid #3a4480; border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); overflow: hidden; }
+.st-head { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-bottom: 1px solid #2c3462; }
+.st-head b { font-size: 15px; }
+.st-tabs { display: flex; gap: 4px; flex: 1; }
+.st-tabs button { background: none; border: 1px solid transparent; padding: 5px 10px; }
+.st-tabs button.on { background: #2a3366; border-color: #47539a; color: #fff; }
+.st-x { background: none; border: none; color: #8790bb; padding: 2px 6px; }
+.st-body { overflow-y: auto; padding: 6px 16px 16px; }
+.st-body h4 { font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; color: #8790bb; margin: 16px 0 4px; font-weight: 600; }
+.st-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid #1f2650; cursor: default; }
+label.st-row { cursor: pointer; }
+.st-l { font-size: 13.5px; color: #e8ebfa; }
+.st-d { font-size: 12px; color: #7f88b5; margin-top: 2px; overflow-wrap: anywhere; }
+.st-note { font-size: 12.5px; color: #959ec7; margin: 10px 0 4px; line-height: 1.5; }
+.st-empty { color: #7880a8; font-size: 13px; padding: 16px 0; }
+.st-ctl { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.st-btn { white-space: nowrap; }
+.st-btn.small { padding: 4px 9px; font-size: 12px; }
+.st-seg { display: inline-flex; border: 1px solid #2c3462; border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.st-seg button { border: none; border-radius: 0; padding: 5px 10px; background: #1b2140; font-size: 12.5px; white-space: nowrap; }
+.st-seg button + button { border-left: 1px solid #2c3462; }
+.st-seg button.on { background: #2f3a78; color: #fff; }
+.st-switch { appearance: none; width: 36px; height: 20px; border-radius: 20px; background: #2a3159; position: relative; cursor: pointer; flex-shrink: 0; transition: background .15s; margin: 0; }
+.st-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #c9d0f2; transition: transform .15s; }
+.st-switch:checked { background: #4f63d8; }
+.st-switch:checked::after { transform: translateX(16px); background: #fff; }
+.st-body select, .st-body input[type=text] { background: #1b2140; color: #e8ebfa; border: 1px solid #2c3462; border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12.5px; outline: none; }
+.st-body select:focus, .st-body input[type=text]:focus { border-color: #6b78c9; }
+.st-buildings { padding: 6px 0 10px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: #959ec7; }
+.st-b { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.st-b input { width: 200px; }
+.st-world { margin-top: 14px; padding: 8px 12px 2px; background: #11152e; border: 1px solid #222a4e; border-radius: 10px; }
+.st-world .st-wname { font-weight: 600; font-size: 13.5px; width: 100%; margin-bottom: 4px; }
+.st-world .st-row:last-child { border-bottom: none; }
+
+/* first-run tour */
+#tour { position: fixed; inset: 0; z-index: 60; }
+#tour[hidden] { display: none; }
+.tr-spot { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(5, 7, 18, .62); outline: 2px solid #8d97d8; transition: all .25s ease; pointer-events: none; }
+.tr-card { position: fixed; width: min(340px, 90vw); background: #151a35; border: 1px solid #6b78c9; border-radius: 12px; padding: 14px 16px 12px; box-shadow: 0 16px 40px rgba(0, 0, 0, .5); transition: left .25s ease, top .25s ease; }
+.tr-card h3 { margin: 2px 0 6px; font-size: 15px; }
+.tr-card p { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #c9d0f2; }
+.tr-n { font-size: 11px; color: #8790bb; letter-spacing: .5px; }
+.tr-btns { display: flex; gap: 6px; justify-content: flex-end; }
+.tr-skip { margin-right: auto; background: none; border: none; color: #8790bb; padding-left: 0; }
+.tr-next { background: #4f63d8; border-color: #6b78c9; color: #fff; }
+
+/* until the town to show is known, the stage stays empty (then fades in) */
+#stage canvas { transition: opacity .25s; }
+#stage.starting canvas { opacity: 0; }

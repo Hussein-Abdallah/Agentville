@@ -12,7 +12,10 @@ import { BADGE_LABEL } from './badges';
 import { Toasts } from './toasts';
 import { JumpBox } from './jump';
 import { NeedsBoard } from './needs';
-import { DEFAULT_SETTINGS, type Settings } from './settings';
+import { DEFAULT_SETTINGS, readSettings, toastScale, type Settings } from './settings';
+import { SettingsPanel, type MapChoice } from './settingsview';
+import { lineFor } from './lines';
+import { Tour } from './tour';
 import type { ActivityKind } from './types';
 import type { AgentState, TimeOfDay, TownData, TownInfo } from './types';
 
@@ -20,10 +23,18 @@ const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 
 async function main() {
   const sprites = new RobotSprites();
-  const [town] = await Promise.all([loadTown('frostpeak'), sprites.init()]);
+  // start on the map shown last time, in the day or night last chosen, and keep the town hidden until
+  // the one to show is known (no other town flashing up first)
+  $('#stage').classList.add('starting');
+  const lastMap = localStorage.getItem('agentville.lastMap') ?? 'frostpeak';
+  const [town] = await Promise.all([loadTown(lastMap).catch(() => loadTown('frostpeak')), sprites.init()]);
+  const cached = readSettings(JSON.parse(localStorage.getItem('agentville.settings') ?? 'null'));
 
   const world = new World($('#stage'), town, sprites);
+  world.time = cached.time === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'night' : 'day') : cached.time;
   await world.init();
+  const reveal = () => $('#stage').classList.remove('starting');
+  setTimeout(reveal, 3000); // no town to pick (no sessions yet): show what there is
 
   const feed: string[] = [];
   const log = (html: string) => {
@@ -51,20 +62,28 @@ async function main() {
   /** the town the scene shows robots for (set once its map has loaded) */
   let shown: string | null = null;
   // town maps (Frostpeak, Maplewood…), loaded once each; a missing one falls back to Frostpeak
-  const mapCache = new Map<string, Promise<TownData>>([['frostpeak', Promise.resolve(town)]]);
+  const mapCache = new Map<string, Promise<TownData>>([[town.id, Promise.resolve(town)]]);
   /** town maps already loaded, for their pictures (the world map's thumbnails) */
-  const mapsLoaded = new Map<string, TownData>([['frostpeak', town]]);
+  const mapsLoaded = new Map<string, TownData>([[town.id, town]]);
   const mapData = (id: string) => {
     let p = mapCache.get(id);
     if (!p) { p = loadTown(id).catch(() => town); mapCache.set(id, p); p.then((t) => mapsLoaded.set(id, t)); }
     return p;
   };
 
-  // day or night: chosen with the Day / Night / System buttons (System follows the Mac's light or dark mode)
+  // settings (~/.agentville/settings.json in live mode; this browser's own copy in demo mode)
+  let settings: Settings = cached;
+  // (before Settings existed, day or night was kept on its own)
+  const oldTime = localStorage.getItem('agentville.time');
+  if (oldTime === 'day' || oldTime === 'night' || oldTime === 'system') { settings.time = oldTime; localStorage.removeItem('agentville.time'); }
+  /** Saves settings: the service keeps them (live) or this browser does (demo). Set below. */
+  let saveSettings: (s: Settings) => void = () => {};
+
+  // day or night: the header icon (System follows the Mac's light or dark mode)
   type TimeMode = TimeOfDay | 'system';
-  let timeMode: TimeMode = (['day', 'night', 'system'] as const).find((m) => m === localStorage.getItem('agentville.time')) ?? 'system';
+  const timeMode = (): TimeMode => settings.time;
   const dark = matchMedia('(prefers-color-scheme: dark)');
-  const timeNow = (): TimeOfDay => (timeMode === 'system' ? (dark.matches ? 'night' : 'day') : timeMode);
+  const timeNow = (): TimeOfDay => (timeMode() === 'system' ? (dark.matches ? 'night' : 'day') : (timeMode() as TimeOfDay));
   // one icon: a sun (day), a moon (night) or a half-lit circle (system); click for the next
   const TIME_ICON: Record<TimeMode, string> = {
     day: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.3M12 19.2v2.3M2.5 12h2.3M19.2 12h2.3M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>',
@@ -75,18 +94,37 @@ async function main() {
   const TIME_TIP: Record<TimeMode, string> = { day: 'Day', night: 'Night', system: "System: follows your Mac's light or dark mode" };
   const applyTime = () => {
     world.setTime(timeNow());
-    const b = $('#t-time');
-    b.innerHTML = TIME_ICON[timeMode];
-    b.title = `${TIME_TIP[timeMode]} (now ${timeNow()}). Click for ${TIME_TIP[TIME_NEXT[timeMode]].split(':')[0].toLowerCase()}.`;
-    b.setAttribute('aria-label', `Time of day: ${TIME_TIP[timeMode]}`);
+    const b = $('#t-time'), m = timeMode();
+    b.innerHTML = TIME_ICON[m];
+    b.title = `${TIME_TIP[m]} (now ${timeNow()}). Click for ${TIME_TIP[TIME_NEXT[m]].split(':')[0].toLowerCase()}.`;
+    b.setAttribute('aria-label', `Time of day: ${TIME_TIP[m]}`);
   };
-  $('#t-time').onclick = () => {
-    timeMode = TIME_NEXT[timeMode];
-    localStorage.setItem('agentville.time', timeMode);
+  $('#t-time').onclick = () => saveSettings({ ...settings, time: TIME_NEXT[timeMode()] });
+  dark.addEventListener('change', () => { if (timeMode() === 'system') applyTime(); });
+
+  /** The clock in the header (Settings), redrawn when the minute changes. */
+  let clockText = '';
+  const renderClock = () => {
+    const el = $('#clock');
+    const text = settings.clock === 'off' ? '' : new Date().toLocaleTimeString([], { hour: settings.clock === '12h' ? 'numeric' : '2-digit', minute: '2-digit', hour12: settings.clock === '12h' });
+    if (text !== clockText) { clockText = text; el.textContent = text; el.hidden = !text; }
+  };
+  /** Settings changed (saved here, or by another page, or by hand): show them everywhere. */
+  const applySettings = (s: Settings) => {
+    settings = s;
+    // demo mode keeps its settings here; live mode keeps a copy so the next visit starts right (day or night…)
+    localStorage.setItem('agentville.settings', JSON.stringify(s));
     applyTime();
+    world.showLabels = s.labels; world.showPaths = s.paths;
+    $('#t-labels').classList.toggle('on', s.labels); $('#t-paths').classList.toggle('on', s.paths);
+    renderClock();
+    settingsPanel?.refresh();
   };
-  dark.addEventListener('change', () => { if (timeMode === 'system') applyTime(); });
-  applyTime();
+  let settingsPanel: SettingsPanel | undefined;
+  /** the town maps there are (for Settings) and how town edits are made: by the service, or in the demo */
+  let mapChoices: MapChoice[] = [];
+  let townEdits: { townMap: (id: string, map: string) => void; buildingName: (id: string, b: string, name: string) => void; moveTowns: (ids: string[], world: string) => void } =
+    { townMap: () => {}, buildingName: () => {}, moveTowns: () => {} };
   let switching = 0;
   let shownMap: string | null = null;
   let picked = localStorage.getItem('agentville.town');
@@ -109,9 +147,11 @@ async function main() {
     if (world.town !== td) await world.load(td); else world.clear();
     if (seq !== switching) return;
     shown = id;
+    if (td.id) localStorage.setItem('agentville.lastMap', td.id); // the next visit starts on this map
     showTownLabels();
     for (const a of agents.values()) if (inView(a)) world.apply(a, true); // already at their buildings
     render();
+    reveal();
   };
   /** The town you picked, else one where a robot needs you, else the most recently busy one. */
   const autoTown = () => {
@@ -121,8 +161,7 @@ async function main() {
   };
   /** Jump to a robot, in whatever town it is. */
   const goTo = async (a: AgentState) => { setView('town'); if (a.town && a.town !== current) await setTown(a.town, true); selected = a.id; world.focus(a.id); render(); };
-  // toasts for what just happened (which kinds: ~/.agentville/settings.json), and when each robot started waiting
-  let settings: Settings = DEFAULT_SETTINGS;
+  // toasts for what just happened (which kinds: Settings), and when each robot started waiting
   const toasts = new Toasts($('#toasts'));
   const waitSince = new Map<string, number>();
   const placeOf = (a: AgentState) => { const t = towns.find((x) => x.id === a.town); return [t?.name ?? a.project, t?.world].filter(Boolean).join(' · '); };
@@ -132,22 +171,32 @@ async function main() {
     if (started) waitSince.set(s.id, catchingUp ? s.lastActive ?? Date.now() : Date.now());
     if (s.status !== 'waiting') { waitSince.delete(s.id); toasts.dismiss(`wait-${s.id}`); }
     if (catchingUp) return;
-    const on = settings.toasts, dot = sprites.meta.colors[s.color], where = esc(placeOf(s));
+    const on = settings.toasts, dot = sprites.meta.colors[s.color], where = esc(placeOf(s)), k = toastScale(settings);
     const go = () => goTo(agents.get(s.id) ?? s);
     const who = `<b>${esc(s.name)}</b>`;
     if (on.needsYou && started) {
-      toasts.show({ key: `wait-${s.id}`, tone: 'wait', dot, title: `${who} needs you`, body: [esc(s.task ?? 'Waiting for you'), s.ask ? `<i>${esc(s.ask)}</i>` : '', where].filter(Boolean).join('<br>'), onClick: go, seconds: 15 });
+      toasts.show({ key: `wait-${s.id}`, tone: 'wait', dot, title: `${who} needs you`, body: [esc(s.task ?? 'Waiting for you'), s.ask ? `<i>${esc(s.ask)}</i>` : '', where].filter(Boolean).join('<br>'), onClick: go, seconds: 15 * k });
     }
     const r = s.result;
     if (on.failed && r && !r.ok && FAIL_TOASTS.has(r.kind) && r.at !== prev?.result?.at) {
-      toasts.show({ key: `fail-${s.id}`, tone: 'bad', dot, title: `${who}: ${esc(RESULT_LABEL[r.kind][1])}`, body: where, onClick: go });
+      toasts.show({ key: `fail-${s.id}`, tone: 'bad', dot, title: `${who}: ${esc(RESULT_LABEL[r.kind][1])}`, body: where, onClick: go, seconds: 8 * k });
     }
     if (on.finished && !s.parentId && prev?.status === 'working' && s.status === 'idle') {
-      toasts.show({ key: `done-${s.id}`, tone: 'done', dot, title: `${who} finished`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 });
+      toasts.show({ key: `done-${s.id}`, tone: 'done', dot, title: `${who} finished`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 * k });
     }
     if (on.sessions && !s.parentId && !prev) {
-      toasts.show({ key: `came-${s.id}`, tone: 'info', dot, title: `${who} started`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 });
+      toasts.show({ key: `came-${s.id}`, tone: 'info', dot, title: `${who} started`, body: [esc(s.title ?? ''), where].filter(Boolean).join('<br>'), onClick: go, seconds: 6 * k });
     }
+    // follow new sessions (Settings): go to the town where one just started
+    if (settings.followNew && !prev && !s.parentId && s.town && s.town !== current) { setTown(s.town, true); setView('town'); }
+  };
+  /** Personality lines (Settings): a short line when a session starts, finishes, or a test, build or deploy passes or fails. */
+  const sayLine = (prev: AgentState | undefined, s: AgentState, catchingUp: boolean) => {
+    if (!settings.lines || catchingUp || s.parentId) return;
+    const r = s.result;
+    if (!prev) world.say(s.id, lineFor('start'), 4);
+    else if (r && r.at !== prev.result?.at && FAIL_TOASTS.has(r.kind)) world.say(s.id, lineFor(r.ok ? 'pass' : 'fail', r.kind), 4);
+    else if (prev.status === 'working' && s.status === 'idle') world.say(s.id, lineFor('finish'), 4);
   };
   /** A robot appeared or changed (live service or demo). */
   const applyAgent = (s: AgentState, catchingUp = false) => {
@@ -165,7 +214,7 @@ async function main() {
       }
     }
     if (current === null && towns.length) setTown(autoTown()); // on connect, the towns list (after the robots) picks
-    if (inView(s)) world.apply(s);
+    if (inView(s)) { world.apply(s); sayLine(prev, s, catchingUp); }
     else if (world.robots.has(s.id)) world.remove(s.id); // it left for another town: walks off to the station
   };
   /** Folder labels per demo town, from its own map (loaded first). */
@@ -293,7 +342,8 @@ async function main() {
         const a = agents.get(id);
         if (!ok && a) log(`Couldn't open <b>${esc(a.name)}</b>'s session${appOf(a, agents) ? ` in ${esc(appOf(a, agents)!)}` : ''}`);
       },
-      settings: (s) => { settings = s; },
+      settings: (s) => applySettings(s),
+      maps: (m) => { mapChoices = m; settingsPanel?.refresh(); },
       status: (ok) => {
         $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off');
         // the token was renewed (or the cookie cleared): reconnecting won't help until you sign in again
@@ -302,6 +352,9 @@ async function main() {
     });
     goToSession = (id) => conn.focus(id);
     renameRobot = (id, name) => conn.rename(id, name);
+    // Settings are the service's: shown at once, and saved there (it sends them back to every page)
+    saveSettings = (s) => { applySettings(s); conn.saveSettings(s); };
+    townEdits = { townMap: conn.townMap, buildingName: conn.buildingName, moveTowns: conn.moveTowns };
     alertsBtn.onclick = () => conn.setAlerts(!alertsBtn.dataset.on);
     allowBtn.onclick = async () => { await Notification.requestPermission(); conn.setNotify(canNotify()); showAllow(); };
     conn.setNotify(canNotify());
@@ -317,12 +370,22 @@ async function main() {
     demo = new Demo((id) => demoMaps.get(id)!, sprites.colors(), applyAgent, removeAgent, log, (id) => !inView(agents.get(id)!) || world.robots.get(id)?.mode === 'present');
     $('#t-add').onclick = () => demo!.spawn();
     renameRobot = (id, name) => demo!.rename(id, name);
+    // the demo keeps its settings in this browser, and its town edits only until you reload
+    saveSettings = (s) => applySettings(s);
+    mapChoices = [...new Set(towns.map((t) => t.map))].map((id) => ({ id, name: demoMaps.get(towns.find((t) => t.map === id)!.id)!.name }));
+    townEdits = {
+      townMap: () => log('Changing a town\'s look works with your real sessions'),
+      buildingName: (id, b, name) => { const t = towns.find((x) => x.id === id); if (t) { if (name.trim()) t.names[b] = name.trim(); else delete t.names[b]; if (id === current) showTownLabels(); } },
+      moveTowns: (ids, w) => { for (const t of towns) if (ids.includes(t.id)) t.world = w; renderCrumbs(); },
+    };
     log('Demo mode: simulated agents');
     demo.start(12); // enough robots that bigger worlds aren't empty
   }
   // click a robot or card: show its details (click again, ✕ or Esc to close)
   let selected: string | null = null;
   const select = (id: string) => {
+    // Settings can make a click bring the session to the front instead (when its app is known)
+    if (settings.clickOpens === 'session' && goToSession && appOf(agents.get(id), agents)) { goToSession(id); world.focus(id); return; }
     const a = demo?.agents.get(id);
     if (a?.status === 'waiting') demo!.approve(id);
     else if (selected === id) { selected = null; render(); return; }
@@ -331,7 +394,7 @@ async function main() {
     render();
   };
   world.onRobotClick = select;
-  (window as any).__av = { world, demo };
+  (window as any).__av = { world, demo, applyAgent }; // for poking at it from the console
 
   // sidebar
   let last = '';
@@ -400,6 +463,8 @@ async function main() {
     needs.update(all.filter((a) => a.status === 'waiting'), (a) => waitSince.get(a.id) ?? a.lastActive ?? Date.now(), towns, sprites.meta.colors,
       (a) => (goToSession ? appOf(a, agents) : undefined));
     jump.update(all, towns, sprites.meta.colors);
+    settingsPanel?.refresh(); // towns and worlds change while it's open
+    renderClock();
     renderPicker();
     if (view === 'planet') planet.update({ towns, agents: [...agents.values()], current: mapWorld ?? currentWorld() });
     if (view === 'world' && mapWorld && mapStyle === 'painted') worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
@@ -433,8 +498,33 @@ async function main() {
   $('#z-in').onclick = () => world.zoomBy(1.4);
   $('#z-out').onclick = () => world.zoomBy(1 / 1.4);
   $('#z-fit').onclick = () => world.resetZoom();
-  toggle('#t-labels', () => world.showLabels, (v) => (world.showLabels = v));
-  toggle('#t-paths', () => world.showPaths, (v) => (world.showPaths = v));
+  $('#t-labels').onclick = () => saveSettings({ ...settings, labels: !settings.labels });
+  $('#t-paths').onclick = () => saveSettings({ ...settings, paths: !settings.paths });
+
+  // the Settings page (gear button)
+  settingsPanel = new SettingsPanel({
+    get: () => settings, save: (s) => saveSettings(s), towns: () => towns, maps: () => mapChoices, mapData,
+    townMap: (id, m) => townEdits.townMap(id, m), buildingName: (id, b, n) => townEdits.buildingName(id, b, n), moveTowns: (ids, w) => townEdits.moveTowns(ids, w),
+    tour: () => startTour(), live,
+  });
+  $('#t-settings').onclick = () => settingsPanel!.open();
+
+  // the first-run tour (again from Settings)
+  const tour = new Tour(() => localStorage.setItem('agentville.toured', '1'));
+  const startTour = () => {
+    setView('town');
+    tour.start([
+      { target: '#stage', title: 'This is a town', text: 'Each town is one repo. Every robot is a Claude Code session working in it, and the buildings are its folders: a robot walks to the one it\'s working in. Helpers (subagents) are the small robots.' },
+      { target: '#agents', title: 'Who\'s here', text: 'The robots in this town. Click one (or the robot itself) for its details: what it\'s doing, its to-do list, how full its context is, and your last exchange. Click its name there to rename it.' },
+      { target: '#needs-wrap', title: 'When a robot needs you', text: 'A robot waiting for a permission or your answer turns orange and this counter lights up. Click it for the list across every world, with exactly what each one wants.' },
+      { target: '#crumbs', title: 'Towns, worlds and the planet', text: 'A world is a project: the repos you work on together. Go up to see a world\'s towns, then the planet with every world (or press M). Esc comes back down.' },
+      { target: '#town-pick', title: 'Find anything', text: 'Search towns here (press /), or press ⌘K to jump to any robot, town or world.' },
+      { target: '#t-time', title: 'Day and night', text: 'Each town has a day and a night look. This follows your Mac\'s light or dark mode, or pick one.' },
+      { target: '#t-settings', title: 'Settings', text: 'Notifications and toasts, labels, a clock, robot lines, each town\'s look and building names, and which world each town belongs to. You can take this tour again from here.' },
+    ]);
+  };
+  if (!localStorage.getItem('agentville.toured') && !new URLSearchParams(location.search).has('notour')) setTimeout(startTour, 1200);
+  applySettings(settings);
 }
 
 function card(a: AgentState, world: World, hex: string) {

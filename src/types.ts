@@ -96,8 +96,10 @@ export interface TownInfo {
   land?: string;
   /** folder names per building */
   folders: Record<string, string[]>;
-  /** buildings renamed in agentville.json */
+  /** renamed buildings: agentville.json's, then yours from Settings */
   names: Record<string, string>;
+  /** agentville.json picks its town map (Settings can't change it) */
+  mapPinned?: boolean;
 }
 
 export interface BuildingDef {

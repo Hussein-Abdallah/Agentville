@@ -12,6 +12,9 @@ const QUIET_MS = 15_000; // one alert per session per 15 s (permission prompts c
 export class Alerts {
   private last = new Map<string, number>(); // session id -> last alert time
 
+  /** play the sound with each alert */
+  sound = true;
+
   constructor(public on: boolean, private run: (cmd: string, args: string[]) => void = defaultRun) {}
 
   /** Plays the sound and decides who shows the notification: an open page, macOS, or nobody. */
@@ -21,7 +24,7 @@ export class Alerts {
     if (now - (this.last.get(st.id) ?? -Infinity) < QUIET_MS) return;
     this.last.set(st.id, now);
     const mac = process.platform === 'darwin';
-    if (mac) this.run('afplay', [SOUND]);
+    if (mac && this.sound) this.run('afplay', [SOUND]);
     if (pageCanNotify) return 'page';
     if (!mac) return;
     const where = [project, st.title].filter(Boolean).join(' · ').slice(0, 80);

@@ -1,8 +1,11 @@
 import type { AgentState, TownInfo } from './types';
 import type { Settings } from './settings';
 
+/** A town map the service has (Frostpeak, Maplewood…). */
+export interface MapInfo { id: string; name: string }
+
 type Msg =
-  | { type: 'snapshot'; agents: AgentState[]; log: string[]; towns: TownInfo[]; alerts?: boolean; settings?: Settings }
+  | { type: 'snapshot'; agents: AgentState[]; log: string[]; towns: TownInfo[]; alerts?: boolean; settings?: Settings; maps?: MapInfo[] }
   | { type: 'agent'; state: AgentState }
   | { type: 'remove'; id: string }
   | { type: 'log'; html: string }
@@ -28,6 +31,8 @@ export interface LiveHandlers {
   focused: (id: string, ok: boolean) => void;
   /** ~/.agentville/settings.json, on connect and whenever it changes */
   settings: (s: Settings) => void;
+  /** the town maps there are, on connect */
+  maps?: (maps: MapInfo[]) => void;
 }
 
 /** Connects to the local Agentville service and keeps reconnecting if it restarts. Returns a sender for settings. */
@@ -51,6 +56,7 @@ export function connectLive(url: string, h: LiveHandlers) {
         h.towns(m.towns ?? []);
         if (m.alerts !== undefined) h.alerts(m.alerts);
         if (m.settings) h.settings(m.settings);
+        if (m.maps) h.maps?.(m.maps);
       } else if (m.type === 'agent') { known.add(m.state.id); h.apply(m.state); }
       else if (m.type === 'remove') { known.delete(m.id); h.remove(m.id); }
       else if (m.type === 'log') h.log(m.html);
@@ -71,6 +77,11 @@ export function connectLive(url: string, h: LiveHandlers) {
     focus: (id: string) => send({ type: 'focus', id }),
     /** give a session's robot your own name */
     rename: (id: string, name: string) => send({ type: 'rename', id, name }),
+    /** Settings: save them; a town's map; a building's name; move towns to a world */
+    saveSettings: (settings: Settings) => send({ type: 'settings', settings }),
+    townMap: (id: string, map: string) => send({ type: 'townMap', id, map }),
+    buildingName: (id: string, building: string, name: string) => send({ type: 'buildingName', id, building, name }),
+    moveTowns: (ids: string[], world: string) => send({ type: 'world', ids, world }),
   };
 }
 

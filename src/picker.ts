@@ -12,6 +12,8 @@ export class TownPicker {
   private shown: TownInfo[] = [];
   private active = 0;
   private key = '';
+  /** bring the highlighted town into view on the next draw (moved with the keys, or just opened); a redraw alone keeps your scroll */
+  private reveal = false;
 
   constructor(private el: HTMLElement, private onPick: (id: string) => void) {
     el.innerHTML = `<input class="tp-input" type="text" placeholder="Find a town ( / )" aria-label="Find a town" autocomplete="off" spellcheck="false">
@@ -19,12 +21,13 @@ export class TownPicker {
     this.input = el.querySelector('input')!;
     this.list = el.querySelector('.tp-list')!;
     this.input.addEventListener('focus', () => { this.input.select(); this.open(); });
-    this.input.addEventListener('input', () => { this.active = 0; this.open(); });
+    this.input.addEventListener('input', () => { this.active = 0; this.open(); this.list.scrollTop = 0; });
     this.input.addEventListener('blur', () => this.close());
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         this.active = (this.active + (e.key === 'ArrowDown' ? 1 : -1) + this.shown.length) % Math.max(1, this.shown.length);
+        this.reveal = true;
         this.renderList();
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -64,6 +67,7 @@ export class TownPicker {
   private open() {
     this.list.hidden = false;
     this.key = '';
+    this.reveal = true;
     this.renderList();
   }
 
@@ -99,10 +103,12 @@ export class TownPicker {
       return `${head}<div class="tp-item${i === this.active ? ' on' : ''}${t.id === this.current ? ' cur' : ''}" role="option" data-id="${esc(t.id)}">
         <span class="tp-name">${mark(t.name, q)}</span>${q ? `<span class="tp-wname">${mark(t.world, q)}</span>` : ''}${count(t.id)}</div>`;
     }).join('') || '<div class="tp-none">No town matches</div>';
-    if (html === this.key) return;
+    if (html === this.key && !this.reveal) return;
     this.key = html;
+    const top = this.list.scrollTop;
     this.list.innerHTML = html;
-    this.list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+    this.list.scrollTop = top; // robots coming and going redraw the list: keep where you scrolled to
+    if (this.reveal) { this.reveal = false; this.list.querySelector('.on')?.scrollIntoView({ block: 'nearest' }); }
   }
 }
 

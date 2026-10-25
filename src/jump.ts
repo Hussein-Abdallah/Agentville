@@ -14,6 +14,9 @@ export class JumpBox {
   private list: HTMLElement;
   private shown: Item[] = [];
   private active = 0;
+  private key = '';
+  /** bring the highlighted row into view on the next draw (moved with the keys, or new search); a redraw alone keeps your scroll */
+  private reveal = false;
   private data: { agents: AgentState[]; towns: TownInfo[]; colors: Record<string, string> } = { agents: [], towns: [], colors: {} };
 
   constructor(private onPick: (t: JumpTarget) => void) {
@@ -28,11 +31,12 @@ export class JumpBox {
     this.input = this.box.querySelector('input')!;
     this.list = this.box.querySelector('.jp-list')!;
     this.box.addEventListener('mousedown', (e) => { if (e.target === this.box) this.close(); }); // the dimmed backdrop
-    this.input.addEventListener('input', () => { this.active = 0; this.render(); });
+    this.input.addEventListener('input', () => { this.active = 0; this.reveal = true; this.render(); });
     this.input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         this.active = (this.active + (e.key === 'ArrowDown' ? 1 : -1) + this.shown.length) % Math.max(1, this.shown.length);
+        this.reveal = true;
         this.render();
       } else if (e.key === 'Enter') { e.preventDefault(); this.pick(this.active); }
       else if (e.key === 'Escape') { e.preventDefault(); this.close(); }
@@ -60,6 +64,8 @@ export class JumpBox {
     this.box.hidden = false;
     this.input.value = '';
     this.active = 0;
+    this.reveal = true;
+    this.list.scrollTop = 0;
     this.render();
     this.input.focus();
   }
@@ -80,9 +86,14 @@ export class JumpBox {
     const q = this.input.value.trim().toLowerCase();
     this.shown = q ? this.matches(q) : this.idle();
     this.active = Math.min(this.active, Math.max(0, this.shown.length - 1));
-    this.list.innerHTML = this.shown.map((it, i) => `<div class="jp-item${i === this.active ? ' on' : ''}" role="option" data-i="${i}">${it.html}</div>`).join('')
+    const html = this.shown.map((it, i) => `<div class="jp-item${i === this.active ? ' on' : ''}" role="option" data-i="${i}">${it.html}</div>`).join('')
       || '<div class="jp-none">Nothing matches</div>';
-    this.list.querySelector('.on')?.scrollIntoView({ block: 'nearest' });
+    if (html === this.key && !this.reveal) return;
+    this.key = html;
+    const top = this.list.scrollTop;
+    this.list.innerHTML = html;
+    this.list.scrollTop = top; // robots changing redraw the list: keep where you scrolled to
+    if (this.reveal) { this.reveal = false; this.list.querySelector('.on')?.scrollIntoView({ block: 'nearest' }); }
   }
 
   /** Nothing typed: robots that need you (longest first), then the most recently busy, then the worlds. */

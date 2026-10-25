@@ -41,6 +41,15 @@ export class TownMaps {
     return map;
   }
 
+  /** You picked a map for a repo (the Settings page); it keeps its place in the order. */
+  set(root: string, map: string): boolean {
+    if (!this.maps.includes(map)) return false;
+    const data = this.load();
+    data[root] = map;
+    this.save(data);
+    return true;
+  }
+
   /** Position of a repo in the order repos got their maps (earlier holds its map's spot on the world map). */
   order(root: string): number {
     const i = Object.keys(this.load()).indexOf(root);

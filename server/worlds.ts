@@ -96,7 +96,9 @@ export class Worlds {
   worldOf(root: string, repoWorld?: string): string {
     const r = real(root);
     const o = this.load();
-    for (const [name, pats] of o.worlds) if (pats.some((p) => (p.deep ? inside(r, p.dir) : r === p.dir))) return name;
+    // a repo listed by itself wins over a folder pattern (the Settings page lists repos by themselves)
+    for (const [name, pats] of o.worlds) if (pats.some((p) => !p.deep && r === p.dir)) return name;
+    for (const [name, pats] of o.worlds) if (pats.some((p) => p.deep && inside(r, p.dir))) return name;
     if (typeof repoWorld === 'string' && repoWorld.trim()) return repoWorld.trim();
     return this.byFolder(r, o.root);
   }
@@ -153,6 +155,39 @@ export class Worlds {
       return rel ? path.join(this.home, rel.split(path.sep)[0]) : this.home;
     }
     return path.sep + (p.split(path.sep).find(Boolean) ?? '');
+  }
+
+  /**
+   * Puts repos in a world (the Settings page): worlds.json lists each by itself under that world and
+   * no longer under any other; folder patterns and "root" stay as you wrote them. Renaming a world is
+   * moving all its repos to the new name.
+   */
+  assign(roots: string[], world: string): boolean {
+    const name = world.replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (!name || !roots.length) return false;
+    let data: any = {};
+    try { data = JSON.parse(fs.readFileSync(this.configFile, 'utf8')); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') { console.error(`agentville: not changing ${this.configFile}: ${(e as Error).message}`); return false; }
+    }
+    if (!isObject(data)) return false;
+    const worlds: Record<string, unknown[]> = isObject(data.worlds) ? (data.worlds as Record<string, unknown[]>) : {};
+    const moving = new Set(roots.map((r) => real(r)));
+    for (const [w, list] of Object.entries(worlds)) {
+      if (!Array.isArray(list)) continue;
+      worlds[w] = list.filter((s) => typeof s !== 'string' || s.endsWith('/**') || !moving.has(this.expand(s) ?? ''));
+      if (!worlds[w].length) delete worlds[w];
+    }
+    const short = (r: string) => (within(r, this.home) && r !== this.home ? '~/' + path.relative(this.home, r) : r);
+    worlds[name] = [...(worlds[name] ?? []), ...[...moving].map(short)];
+    data.worlds = worlds;
+    try {
+      fs.mkdirSync(path.dirname(this.configFile), { recursive: true });
+      const tmp = `${this.configFile}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+      fs.renameSync(tmp, this.configFile);
+    } catch (err) { console.error(`Couldn't save ${this.configFile}: ${(err as Error).message}`); return false; }
+    this.stamp = undefined; // read it again
+    return true;
   }
 
   /** Absolute or ~/ path → real path; undefined for anything else. */

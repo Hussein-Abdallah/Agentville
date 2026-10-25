@@ -41,6 +41,11 @@ export class Robot {
   bubbleSize = { w: 0, h: 0 };
   lastFocus = 0;
   private bubbleKey = '';
+  /** a personality line it's saying; the seconds count from when it's first seen (a robot on the train says it on arrival) */
+  private said?: { text: string; seconds: number; until?: number };
+
+  /** Say a short line for a few seconds (a session started, finished, a test passed…). Needing you comes first. */
+  say(text: string, seconds = 4) { this.said = { text, seconds }; }
   private path: [number, number][] = [];
   private yaw = 0;
   private row = 0;
@@ -213,12 +218,17 @@ export class Robot {
     if (a > 0) this.ring.ellipse(0, 0, 28 * s, 11 * s).stroke({ color: 0xffffff, width: 2.5, alpha: a });
 
     // speech bubble
-    const show = this.mode === 'present' && !moving && (this.state.status === 'waiting' || (this.state.status === 'working' && !!this.state.task));
+    const canSay = this.state.status !== 'waiting' && this.mode !== 'held' && this.mode !== 'gone' && this.mode !== 'leaving';
+    if (this.said && canSay) this.said.until ??= performance.now() + this.said.seconds * 1000;
+    if (this.said?.until && performance.now() > this.said.until) this.said = undefined;
+    const saying = !!this.said && canSay;
+    const show = saying || (this.mode === 'present' && !moving && (this.state.status === 'waiting' || (this.state.status === 'working' && !!this.state.task)));
     // between your prompt and Claude's first step it's thinking: the dots count up
     const dots = this.state.task === 'Thinking…' ? 1 + (Math.floor(this.badgeClock * 2.5) % 3) : 0;
-    const text = this.state.status === 'waiting' ? 'Needs you' : dots ? 'Thinking' + '.'.repeat(dots) + '\u2008'.repeat(3 - dots) : this.state.task ?? '';
-    const key = show ? this.state.status + text : '';
-    if (key !== this.bubbleKey) { this.bubbleKey = key; this.buildBubble(show ? text : '', this.state.status === 'waiting'); }
+    const text = saying ? this.said!.text : this.state.status === 'waiting' ? 'Needs you' : dots ? 'Thinking' + '.'.repeat(dots) + '\u2008'.repeat(3 - dots) : this.state.task ?? '';
+    const style = saying ? 'say' : this.state.status === 'waiting' ? 'urgent' : 'plain';
+    const key = show ? style + text : '';
+    if (key !== this.bubbleKey) { this.bubbleKey = key; this.buildBubble(show ? text : '', style); }
     this.bubble.scale.set(s);
     // world position; the world nudges overlapping bubbles apart afterwards
     this.bubble.position.set(this.view.x, this.y - this.town.robotHeight * s - 14 * s);
@@ -278,18 +288,21 @@ export class Robot {
   }
   private shownTag = '';
 
-  private buildBubble(text: string, urgent: boolean) {
+  /** urgent: needs you (orange); say: a personality line (pale blue, italic); plain: what it's doing */
+  private buildBubble(text: string, style: 'urgent' | 'say' | 'plain') {
     this.bubble.removeChildren().forEach((c) => c.destroy());
     this.bubbleSize = { w: 0, h: 0 };
     if (!text) return;
-    const t = new Text({ text: (urgent ? '! ' : '') + text, style: { fontFamily: FONT, fontSize: 12.5, fontWeight: '600', fill: urgent ? 0xffffff : 0x1c2036 } });
+    const urgent = style === 'urgent', say = style === 'say';
+    const t = new Text({ text: (urgent ? '! ' : '') + text, style: { fontFamily: FONT, fontSize: 12.5, fontWeight: '600', fontStyle: say ? 'italic' : 'normal', fill: urgent ? 0xffffff : 0x1c2036 } });
     t.resolution = 3; t.anchor.set(0.5);
     const w = t.width + 18, h = 24;
+    const bg = urgent ? 0xff7a1a : say ? 0xdcebff : 0xffffff;
     const g = new Graphics()
       .roundRect(-w / 2, -h / 2, w, h, 9)
-      .fill({ color: urgent ? 0xff7a1a : 0xffffff, alpha: 0.96 })
+      .fill({ color: bg, alpha: 0.96 })
       .poly([-6, h / 2 - 1, 6, h / 2 - 1, 0, h / 2 + 6])
-      .fill({ color: urgent ? 0xff7a1a : 0xffffff, alpha: 0.96 });
+      .fill({ color: bg, alpha: 0.96 });
     this.bubble.addChild(g, t);
     this.bubbleSize = { w, h: h + 6 };
   }

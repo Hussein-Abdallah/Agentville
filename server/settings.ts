@@ -1,6 +1,7 @@
-// ~/.agentville/settings.json: what the page shows you (which toasts…). Written with the defaults the
-// first time; edit it by hand (a Settings page will later) and open pages pick the change up within a
-// second or two. A file that doesn't parse is left as it is and the defaults are used until it's fixed.
+// ~/.agentville/settings.json: what the page shows you and how it behaves (toasts, alerts, day or
+// night…). Written with the defaults the first time; the Settings page saves it, and edits by hand are
+// picked up by open pages within a second or two. A file that doesn't parse is left as it is and the
+// defaults are used until it's fixed (or saved from the page).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +31,19 @@ export class SettingsFile {
   }
 
   stop() { fs.unwatchFile(this.file); }
+
+  /** Saves new settings (from the Settings page): checked, then written whole. Returns what was kept. */
+  save(raw: unknown): Settings {
+    const next = readSettings(raw);
+    try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
+      const tmp = `${this.file}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n');
+      fs.renameSync(tmp, this.file);
+    } catch (err) { console.error(`Couldn't save ${this.file}: ${(err as Error).message}`); }
+    this.value = next;
+    return next;
+  }
 
   private read(): Settings {
     let text: string;

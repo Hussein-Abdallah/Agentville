@@ -1,7 +1,8 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
 //   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'|'settings'};
-//                     the page sends {type:'alerts', on}, {type:'notify', can}, {type:'focus', id} (Go to session) and {type:'rename', id, name}
+//                     the page sends {type:'alerts', on}, {type:'notify', can}, {type:'focus', id} (Go to session), {type:'rename', id, name},
+//                     and from Settings {type:'settings', settings}, {type:'townMap', id, map}, {type:'buildingName', id, building, name}, {type:'world', ids, world}
 //   GET  /*        -> the built app (dist/)
 import http from 'node:http';
 import fs from 'node:fs';
@@ -16,6 +17,7 @@ import { focusHost } from './focus';
 import { Auth } from './auth';
 import { MAX_EVENT_BYTES, RateLimit, warnOnce } from './limits';
 import { SettingsFile } from './settings';
+import type { Settings } from '../src/settings';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -25,10 +27,12 @@ const DIST = path.join(APP, 'dist');
 const PUBLIC = path.join(APP, 'public');
 const DEBUG = !!process.env.AGENTVILLE_DEBUG;
 const log = new EventLog(path.join(APP, 'logs'));
-const alerts = new Alerts(process.env.AGENTVILLE_ALERTS !== '0');
 const auth = new Auth();
 const rate = new RateLimit();
 const settings = new SettingsFile();
+// needs-you alerts and their sound follow the settings (AGENTVILLE_ALERTS=0 starts them off this time)
+const alerts = new Alerts(settings.value.alerts && process.env.AGENTVILLE_ALERTS !== '0');
+alerts.sound = settings.value.sound;
 const MAX_CLIENTS = 20; // open pages
 
 const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', 'robot.json'), 'utf8'));
@@ -64,7 +68,12 @@ const sessions: Sessions = new Sessions(maps, Object.keys(robot.colors), (msg) =
 });
 
 // ~/.agentville/settings.json changed: every open page follows
-settings.onChange = (value) => broadcast({ type: 'settings', settings: value });
+settings.onChange = (value) => settingsChanged(value);
+function settingsChanged(value: Settings) {
+  alerts.on = value.alerts; alerts.sound = value.sound;
+  broadcast({ type: 'settings', settings: value });
+  broadcast({ type: 'alerts', on: alerts.on });
+}
 settings.watch();
 
 // each town map's landscape ("land" in town.json), so a world sits on a matching spot of the planet
@@ -166,17 +175,32 @@ server.on('upgrade', (req, socket, head) => {
   let lastFocus = 0;
   wss.handleUpgrade(req, socket, head, (ws) => {
     clients.add(ws);
-    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on, settings: settings.value }));
+    ws.send(JSON.stringify({ type: 'snapshot', agents: sessions.snapshot(), log: recent.slice(0, 8), towns: sessions.towns(), alerts: alerts.on, settings: settings.value,
+      maps: mapIds.map((id) => ({ id, name: townFiles[id].name ?? id })) }));
     ws.on('message', (data) => {
       try {
         const m = JSON.parse(String(data));
-        if (m?.type === 'alerts' && typeof m.on === 'boolean') { alerts.on = m.on; broadcast({ type: 'alerts', on: alerts.on }); }
+        // the Alerts button, and the Settings page: saved for next time too
+        if (m?.type === 'alerts' && typeof m.on === 'boolean' && page) settingsChanged(settings.save({ ...settings.value, alerts: m.on }));
+        if (m?.type === 'settings' && page) settingsChanged(settings.save(m.settings));
         if (m?.type === 'notify') {
           const n = notifiers.size;
           if (m.can === true) notifiers.add(ws); else notifiers.delete(ws);
           if (notifiers.size !== n) console.log(`Pages that can show notifications: ${notifiers.size}`);
         }
         if (m?.type === 'rename' && typeof m.id === 'string' && page) sessions.rename(m.id, m.name);
+        // Settings: a town's map, a building's name, which world towns belong to (only towns it knows)
+        if (m?.type === 'townMap' && typeof m.id === 'string' && typeof m.map === 'string' && page && sessions.setTownMap(m.id, m.map)) {
+          sendTowns(); // pages load the new map first…
+          for (const a of sessions.snapshot()) if (a.town === m.id) broadcast({ type: 'agent', state: a }); // …then its robots move to its plaza
+        }
+        if (m?.type === 'buildingName' && typeof m.id === 'string' && typeof m.building === 'string' && typeof m.name === 'string' && page
+          && sessions.renameBuilding(m.id, m.building, m.name)) sendTowns();
+        if (m?.type === 'world' && Array.isArray(m.ids) && typeof m.world === 'string' && page) {
+          const known = new Set(sessions.towns().map((t) => t.id));
+          const ids = m.ids.filter((id: unknown): id is string => typeof id === 'string' && known.has(id));
+          if (sessions.worlds.assign(ids, m.world)) sendTowns();
+        }
         if (m?.type === 'focus' && typeof m.id === 'string' && page && Date.now() - lastFocus > 1000) {
           lastFocus = Date.now();
           const target = sessions.hostOf(m.id);
