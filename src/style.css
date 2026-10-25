@@ -268,3 +268,13 @@ header .needs { cursor: pointer; }
 #details .talk .claude { background: #12172f; color: #c9d0f2; border: 1px solid #262e58; }
 #details .talk .who { font-weight: 600; font-size: 10.5px; letter-spacing: .6px; text-transform: uppercase; color: #8f98c4; margin-right: 6px; }
 #details .bg-item + .bg-item { margin-top: 2px; }
+
+/* Day / Night / System: one icon button */
+button.icon { display: inline-flex; align-items: center; justify-content: center; width: 32px; padding: 0; height: 30px; }
+button.icon svg { display: block; }
+
+/* a crowded header shrinks the town search box instead of wrapping words */
+header .needs, header button, .crumbs button { white-space: nowrap; }
+header .controls { flex-shrink: 0; }
+#town-pick { min-width: 0; flex-shrink: 1; }
+.tp-input { width: clamp(110px, 16vw, 220px); }

@@ -120,6 +120,8 @@ export interface TownData {
   /** its landscape (snow, autumn, reef, desert…), for where its world sits on the planet */
   land?: string;
   image: string;
+  /** the picture by time of day (the same scene relit); without it the town looks the same day and night */
+  looks?: Record<TimeOfDay, string>;
   size: [number, number];
   /** robot height in image px at the bottom of the map */
   robotHeight: number;
@@ -131,6 +133,8 @@ export interface TownData {
   /** precomputed road paths between doors, key "a|b" (a before b in building order) */
   paths: Record<string, [number, number][]>;
 }
+
+export type TimeOfDay = 'day' | 'night';
 
 export interface RobotMeta {
   frame: { w: number; h: number };

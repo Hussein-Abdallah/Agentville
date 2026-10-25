@@ -1,5 +1,5 @@
 import './style.css';
-import { loadTown } from './town';
+import { loadTown, pictureFor } from './town';
 import { RobotSprites } from './sprites';
 import { World } from './world';
 import { Demo, DEMO_TOWNS, demoFolders } from './demo';
@@ -14,7 +14,7 @@ import { JumpBox } from './jump';
 import { NeedsBoard } from './needs';
 import { DEFAULT_SETTINGS, type Settings } from './settings';
 import type { ActivityKind } from './types';
-import type { AgentState, TownData, TownInfo } from './types';
+import type { AgentState, TimeOfDay, TownData, TownInfo } from './types';
 
 const $ = <T extends HTMLElement>(s: string) => document.querySelector(s) as T;
 
@@ -52,11 +52,41 @@ async function main() {
   let shown: string | null = null;
   // town maps (Frostpeak, Maplewood…), loaded once each; a missing one falls back to Frostpeak
   const mapCache = new Map<string, Promise<TownData>>([['frostpeak', Promise.resolve(town)]]);
+  /** town maps already loaded, for their pictures (the world map's thumbnails) */
+  const mapsLoaded = new Map<string, TownData>([['frostpeak', town]]);
   const mapData = (id: string) => {
     let p = mapCache.get(id);
-    if (!p) { p = loadTown(id).catch(() => town); mapCache.set(id, p); }
+    if (!p) { p = loadTown(id).catch(() => town); mapCache.set(id, p); p.then((t) => mapsLoaded.set(id, t)); }
     return p;
   };
+
+  // day or night: chosen with the Day / Night / System buttons (System follows the Mac's light or dark mode)
+  type TimeMode = TimeOfDay | 'system';
+  let timeMode: TimeMode = (['day', 'night', 'system'] as const).find((m) => m === localStorage.getItem('agentville.time')) ?? 'system';
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const timeNow = (): TimeOfDay => (timeMode === 'system' ? (dark.matches ? 'night' : 'day') : timeMode);
+  // one icon: a sun (day), a moon (night) or a half-lit circle (system); click for the next
+  const TIME_ICON: Record<TimeMode, string> = {
+    day: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.3M12 19.2v2.3M2.5 12h2.3M19.2 12h2.3M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>',
+    night: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>',
+    system: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor" stroke="none"/></svg>',
+  };
+  const TIME_NEXT: Record<TimeMode, TimeMode> = { day: 'night', night: 'system', system: 'day' };
+  const TIME_TIP: Record<TimeMode, string> = { day: 'Day', night: 'Night', system: "System: follows your Mac's light or dark mode" };
+  const applyTime = () => {
+    world.setTime(timeNow());
+    const b = $('#t-time');
+    b.innerHTML = TIME_ICON[timeMode];
+    b.title = `${TIME_TIP[timeMode]} (now ${timeNow()}). Click for ${TIME_TIP[TIME_NEXT[timeMode]].split(':')[0].toLowerCase()}.`;
+    b.setAttribute('aria-label', `Time of day: ${TIME_TIP[timeMode]}`);
+  };
+  $('#t-time').onclick = () => {
+    timeMode = TIME_NEXT[timeMode];
+    localStorage.setItem('agentville.time', timeMode);
+    applyTime();
+  };
+  dark.addEventListener('change', () => { if (timeMode === 'system') applyTime(); });
+  applyTime();
   let switching = 0;
   let shownMap: string | null = null;
   let picked = localStorage.getItem('agentville.town');
@@ -375,7 +405,9 @@ async function main() {
     if (view === 'world' && mapWorld && mapStyle === 'painted') worldMap.update({ towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors });
     if (view === 'world' && mapWorld && mapStyle === 'board') board.update({
       towns, agents: [...agents.values()], world: mapWorld, current, colors: sprites.meta.colors,
-      image: (t) => `towns/${t.map}/town.jpg`, ground: groundFor(mapWorld),
+      // each town's picture at the time of day you see (loading its map the first time)
+      image: (t) => { const m = mapsLoaded.get(t.map); if (!m) mapData(t.map); return m ? pictureFor(m, timeNow()) : `towns/${t.map}/town.jpg`; },
+      ground: groundFor(mapWorld),
     });
   };
 

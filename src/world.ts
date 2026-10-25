@@ -1,5 +1,6 @@
 import { Application, Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
-import type { AgentState, TownData } from './types';
+import type { AgentState, TimeOfDay, TownData } from './types';
+import { pictureFor } from './town';
 import { RobotSprites } from './sprites';
 import { Robot } from './robot';
 import { Transit, loadVehicle } from './transit';
@@ -43,6 +44,11 @@ export class World {
   private center: [number, number] = [0, 0];
   private drag: { x: number; y: number; cx: number; cy: number; moved: boolean } | null = null;
   private bg = new Sprite();
+  /** the town's other picture fading in over `bg` when day turns to night (or back) */
+  private bgNext = new Sprite();
+  /** day or night: which of the town's pictures it shows */
+  time: TimeOfDay = 'day';
+  private fading = false;
   private dragged = false;
   /** the town's train or ferry, if it has one */
   private transit?: Transit;
@@ -56,7 +62,8 @@ export class World {
     this.host.appendChild(this.app.canvas);
     this.watchDensity();
     this.robotLayer.sortableChildren = true;
-    this.scene.addChild(this.bg, this.glowLayer, this.pathLayer, this.labelLayer, this.robotLayer, this.tagLayer, this.bubbleLayer, this.tipLayer);
+    this.bgNext.alpha = 0;
+    this.scene.addChild(this.bg, this.bgNext, this.glowLayer, this.pathLayer, this.labelLayer, this.robotLayer, this.tagLayer, this.bubbleLayer, this.tipLayer);
     this.bubbleLayer.sortableChildren = true;
     this.tagLayer.sortableChildren = true;
     this.app.stage.addChild(this.scene);
@@ -112,11 +119,12 @@ export class World {
   /** Show a town map (background, building glows and labels). Robots are cleared; add them again after. */
   async load(town: TownData) {
     // load the picture first, then swap everything at once: the ticker must never see a half-switched town
-    const tex = await Assets.load({ src: town.image, data: { autoGenerateMipmaps: true } });
+    const tex = await Assets.load({ src: pictureFor(town, this.time), data: { autoGenerateMipmaps: true } });
     this.clear();
     this.town = town;
     this.bg.texture = tex;
     this.bg.width = town.size[0]; this.bg.height = town.size[1];
+    this.bgNext.alpha = 0; this.fading = false;
     this.transit?.view.destroy({ children: true });
     const transit = (this.transit = town.transit ? new Transit(town, town.transit) : undefined);
     if (transit) {
@@ -136,6 +144,20 @@ export class World {
     }
     this.hovered = null;
     this.resetZoom();
+  }
+
+  /** Day or night: the town's other picture fades in over a second (towns with one picture stay as they are). */
+  async setTime(time: TimeOfDay) {
+    if (time === this.time) return;
+    this.time = time;
+    const town = this.town, src = pictureFor(town, time);
+    const tex = await Assets.load({ src, data: { autoGenerateMipmaps: true } });
+    if (this.town !== town || this.time !== time || this.bg.texture === tex) return; // switched again meanwhile
+    this.bgNext.texture = tex;
+    this.bgNext.width = town.size[0]; this.bgNext.height = town.size[1];
+    this.bgNext.alpha = 0;
+    this.fading = true;
+    this.wake();
   }
 
   /** Add or update an agent. `instant`: a new robot stands at its building instead of walking in from the station. */
@@ -253,7 +275,7 @@ export class World {
    * otherwise 20 frames a second, enough for the robots' own animations (6–12 fps), the glows and badges.
    */
   private pace() {
-    const moving = this.drag || performance.now() < this.lively || (this.transit && this.transit.phase !== 'away')
+    const moving = this.drag || this.fading || performance.now() < this.lively || (this.transit && this.transit.phase !== 'away')
       || [...this.robots.values()].some((r) => r.busy);
     const fps = moving ? 0 : 20; // 0: no cap
     if (this.app.ticker.maxFPS !== fps) this.app.ticker.maxFPS = fps;
@@ -271,6 +293,10 @@ export class World {
   private tick(dt: number) {
     dt = Math.min(dt, 0.05);
     this.pace();
+    if (this.fading) {
+      this.bgNext.alpha = Math.min(1, this.bgNext.alpha + dt / 1.2);
+      if (this.bgNext.alpha >= 1) { this.bg.texture = this.bgNext.texture; this.bgNext.alpha = 0; this.fading = false; }
+    }
     this.clock += dt;
     // who is where
     const at = new Map<string, Robot[]>();

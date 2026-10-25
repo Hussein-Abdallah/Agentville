@@ -1,12 +1,16 @@
-import type { TownData } from './types';
+import type { TimeOfDay, TownData } from './types';
 
 export async function loadTown(id: string): Promise<TownData> {
   const res = await fetch(`towns/${id}/town.json`);
   if (!res.ok) throw new Error(`Couldn't load town "${id}"`);
   const t = (await res.json()) as TownData;
   t.image = `towns/${id}/${t.image}`;
+  if (t.looks) t.looks = { day: `towns/${id}/${t.looks.day}`, night: `towns/${id}/${t.looks.night}` };
   return t;
 }
+
+/** A town map's picture for a time of day (its only picture when it has one look). */
+export const pictureFor = (t: TownData, time: TimeOfDay) => t.looks?.[time] ?? t.image;
 
 /** Road path from one building's door to another's, in image px. */
 export function pathBetween(t: TownData, from: string, to: string): [number, number][] {
