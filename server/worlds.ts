@@ -178,7 +178,8 @@ export class Worlds {
       worlds[w] = list.filter((s) => typeof s !== 'string' || s.endsWith('/**') || s.endsWith('\\**') || !moving.has(this.expand(s) ?? ''));
       if (!worlds[w].length) delete worlds[w];
     }
-    const short = (r: string) => (within(r, this.home) && r !== this.home ? '~/' + path.relative(this.home, r) : r);
+    // written the way you'd type them: ~/Dev/acme/api, with / even on Windows (where ~\ paths read oddly)
+    const short = (r: string) => (within(r, this.home) && r !== this.home ? '~/' + path.relative(this.home, r).split(path.sep).join('/') : r);
     worlds[name] = [...(worlds[name] ?? []), ...[...moving].map(short)];
     data.worlds = worlds;
     try {

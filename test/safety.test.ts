@@ -15,8 +15,12 @@ test('the token is made once, kept across restarts, and readable only by you', (
   const a = new Auth(dir);
   assert.match(a.token, /^[0-9a-f]{48}$/);
   assert.equal(new Auth(dir).token, a.token, 'same token after a restart');
-  assert.equal(fs.statSync(path.join(dir, 'token')).mode & 0o777, 0o600);
-  assert.equal(fs.statSync(a.headerFile).mode & 0o777, 0o600);
+  // macOS and Linux: only you can read them (mode 600). Windows has no mode bits: files in your user
+  // folder are already yours alone, through its own access lists.
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(path.join(dir, 'token')).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(a.headerFile).mode & 0o777, 0o600);
+  }
   assert.equal(fs.readFileSync(a.headerFile, 'utf8'), `X-Agentville-Token: ${a.token}\n`, 'what curl -H @file sends');
   const renewed = new Auth(dir, true);
   assert.notEqual(renewed.token, a.token);
