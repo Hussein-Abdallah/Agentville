@@ -13,7 +13,9 @@ export const claudeDir = () => path.resolve(process.env.CLAUDE_CONFIG_DIR ?? pat
 export function safeTranscript(t: unknown): string | undefined {
   if (typeof t !== 'string' || !t.endsWith('.jsonl')) return;
   const abs = path.resolve(t);
-  return abs.startsWith(claudeDir() + path.sep) ? abs : undefined;
+  // Windows paths ignore case (c:\Users and C:\users are the same folder)
+  const fold = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  return fold(abs).startsWith(fold(claudeDir() + path.sep)) ? abs : undefined;
 }
 
 /** The first bytes of a file (up to `max`), or undefined if it can't be read. */
@@ -128,7 +130,7 @@ export function sessionLabels(transcript: string | undefined): { title?: string;
     for (let i = lines.length - 1; i >= 0 && !(out.title && out.lastPrompt); i--) {
       const l = lines[i];
       if (!out.title && l.includes('"custom-title"')) { try { const o = JSON.parse(l); if (typeof o.customTitle === 'string') out.title = o.customTitle; } catch { /* partial line */ } }
-      if (!out.lastPrompt && l.includes('"last-prompt"')) { try { const o = JSON.parse(l); if (typeof o.lastPrompt === 'string') out.lastPrompt = o.lastPrompt; } catch { /* partial line */ } }
+      if (!out.lastPrompt && l.includes('"last-prompt"')) { try { const o = JSON.parse(l); if (typeof o.lastPrompt === 'string' && !/^\s*</.test(o.lastPrompt)) out.lastPrompt = o.lastPrompt; } catch { /* partial line */ } }
     }
   };
   const tail = readTail(transcript, 256 * 1024);

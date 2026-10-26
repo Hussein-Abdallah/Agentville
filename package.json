@@ -11,9 +11,10 @@
     "hooks:install": "tsx server/hooks.ts install",
     "hooks:uninstall": "tsx server/hooks.ts uninstall",
     "hooks:status": "tsx server/hooks.ts status",
+    "hooks:debug": "tsx server/hooks.ts debug",
     "simulate": "tsx server/simulate.ts",
     "token": "tsx server/auth.ts",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test \"test/*.test.ts\""
   },
   "dependencies": {
     "pixi.js": "^8.22.0",
@@ -25,6 +26,9 @@
     "@types/ws": "^8.18.2",
     "typescript": "^5.9.3",
     "vite": "^6.4.5"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "private": true,
   "type": "module"

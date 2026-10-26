@@ -156,6 +156,8 @@ export class Sessions {
   /** Applies one event; returns the resulting robot state (for the log). */
   handle(e: HookEvent): AgentState | { removed: string } | undefined {
     if (!e?.session_id || !e.hook_event_name) return;
+    // Windows: one spelling per folder (the drive letter's case varies between tools)
+    if (process.platform === 'win32' && typeof e.cwd === 'string') e.cwd = e.cwd.replace(/^[a-z]:/, (d) => d.toUpperCase());
     const ev = e.hook_event_name;
     if (ev === 'SessionEnd') { this.end(e.session_id); return { removed: e.session_id }; }
     let s = this.sessions.get(e.session_id);
@@ -192,7 +194,7 @@ export class Sessions {
       case 'UserPromptSubmit':
         if (typeof e.session_title === 'string' && e.session_title) st.title = e.session_title.slice(0, 80);
         else if (typeof e.prompt === 'string' && e.prompt && !st.title) st.title = e.prompt.replace(/\s+/g, ' ').slice(0, 80);
-        if (typeof e.prompt === 'string' && e.prompt.trim()) { st.lastPrompt = plainText(e.prompt, 600); delete st.lastReply; }
+        if (typeof e.prompt === 'string' && e.prompt.trim() && !fromTheApp(e.prompt)) { st.lastPrompt = plainText(e.prompt, 600); delete st.lastReply; }
         s.todo = undefined; // new request: forget the previous plan's current step
         if (st.todos?.every((t) => t.status === 'completed')) st.todos = undefined; // and a finished list
         st.status = 'working';
@@ -364,8 +366,8 @@ export class Sessions {
 
   /** The app the session runs in (sent by the hook as headers) and its transcript. */
   private noteHost(s: Session, e: HookEvent) {
-    const h = hostFrom(e.agentville_app, e.agentville_term, e.agentville_tty);
-    if (h.bundle || h.term) s.host = { ...h, tty: h.tty ?? s.host.tty };
+    const h = hostFrom(e.agentville_app, e.agentville_term, e.agentville_tty, e.agentville_entry, e.agentville_wt);
+    if (h.bundle || h.term || h.entry || h.wt) s.host = { ...h, tty: h.tty ?? s.host.tty };
     else if (h.tty) s.host.tty = h.tty;
     s.state.app = appName(s.host);
     if (!e.agent_id) s.transcript = safeTranscript(e.transcript_path) ?? s.transcript;
@@ -874,6 +876,9 @@ function startFolder(e: HookEvent): string | undefined {
 
 const isQuick = (t?: string) => t === 'Read' || t === 'Grep' || t === 'Glob' || t === 'LS';
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** A "prompt" the app sent, not you: a helper's report, a background task's notice, a reminder. */
+const fromTheApp = (prompt: string) => /^\s*<(agent-message|task-notification|system-reminder|local-command|command-[a-z]+)\b/.test(prompt);
 
 /** Claude Code's list of what's still running at the end of a turn, as background lamps. */
 function backgroundOf(tasks: unknown[]): BackgroundTask[] {

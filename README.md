@@ -1,10 +1,10 @@
 # Agentville
 
-Your Claude Code sessions as little robots in a cozy town. Each robot walks to the building for the folder it's working in, shows what it's doing in a speech bubble, and waves (with a notification) when it needs you. Everything runs on your Mac.
+Your Claude Code sessions as little robots in a cozy town. Each robot walks to the building for the folder it's working in, shows what it's doing in a speech bubble, and waves (with a notification) when it needs you. Everything runs on your computer: macOS or Windows.
 
 ## First time
 
-Needs Node.js 18 or newer (`node -v` to check; install from nodejs.org if missing).
+Needs Node.js 22 or newer (`node -v` to check; install from nodejs.org if missing). Works on macOS and Windows; the commands below are the same on both (in Windows, use PowerShell or Command Prompt).
 
 ```bash
 git clone https://github.com/Hussein-Abdallah/Agentville.git
@@ -13,9 +13,17 @@ npm install
 npm run hooks:install     # connects Claude Code to Agentville (once)
 ```
 
-`hooks:install` adds small hooks to `~/.claude/settings.json` (a backup is saved next to it first). They cover every Claude Code session on this Mac: terminal, VS Code and the desktop app. Each hook just sends the event to Agentville on your machine. It never blocks or slows Claude, and does nothing if Agentville isn't running.
+`hooks:install` adds small hooks to `~/.claude/settings.json` (a backup is saved next to it first). They cover every Claude Code session on this computer: terminal, VS Code and the desktop app. Each hook just sends the event to Agentville on your machine: on macOS a `curl` line, on Windows a small Node script (`server/hook.mjs`) that Claude Code runs directly, so it works whether your hooks run in Git Bash or PowerShell. It never blocks or slows Claude, and does nothing if Agentville isn't running.
 
 After updating Agentville, run `npm run hooks:install` again to get any new hooks. It replaces Agentville's entries (backup first) and leaves your other hooks alone.
+
+### On Windows
+
+Everything works the same, with a few differences:
+
+- **Hooks:** `npm run hooks:install` writes hooks that run `node server/hook.mjs` directly (no shell), so they work whether Claude Code runs hooks in Git Bash or PowerShell. Keep the Agentville folder where it is, or run `hooks:install` again after moving it.
+- **Go to session:** brings forward the window of the app the session runs in (VS Code, Cursor, Windows Terminal, the Claude app, JetBrains IDEs), picking the one whose title has the session's folder. It can't pick a terminal tab the way it does on macOS.
+- **Alerts:** the fallback notification is a Windows toast, and the sound is Windows' own.
 
 ## Every day
 
@@ -33,11 +41,29 @@ Then use Claude Code as usual. Each session appears as a robot. Sessions that we
 | `npm run simulate` | Send fake Claude Code events, to see it working without Claude |
 | `npm test` | Run the tests (Node's test runner; no server, sound or notification needed) |
 | `npm run typecheck` | Type-check the page, the service and the tests |
-| `npm run hooks:status` | Show whether the hooks are installed |
+| `npm run hooks:status` | Check everything between Claude Code and the town: hooks, token, service, recent events |
+| `npm run hooks:debug on [minutes]` / `off` | Log every hook event in full for a while (60 min by default) |
 | `npm run hooks:uninstall` | Remove the hooks from Claude Code (backup saved first) |
 | `npm run dev` + `npm run serve` | Development: live-reloading UI (port 5173) plus the service (port 4917) |
 
 Open `http://localhost:4917/?demo` (or the app without the service running) for demo mode with simulated agents.
+
+### Signing in a browser
+
+The page only shows your real sessions to a browser that's signed in (otherwise you see the demo). The first time, click **Sign in this browser** on the page. Your Mac (or Windows) asks you in a dialog to allow it, with a 4-digit code: allow it only if the page shows the same code. That browser then stays signed in for a year. Each browser, and each Chrome profile, signs in once.
+
+Without the dialog (or on Linux), run `npm run token -- link` and open the link it prints in that browser. The link holds Agentville's token, so keep it to yourself; `npm run token -- new` makes a new one, which signs every browser out.
+
+### When robots don't show up
+
+Run `npm run hooks:status`. It checks each link in order and says what to do about the first broken one:
+
+1. the hooks are in `~/.claude/settings.json`, for every event, in this version;
+2. the token files are in `~/.agentville`;
+3. the service answers on port 4917 and accepts the token;
+4. it has received events, and when the last one came.
+
+If the hooks are fine but no events arrive, turn on `npm run hooks:debug on`, use Claude Code, and watch the service's output: each event prints a line, and the full event goes to `logs/hooks-debug-<date>.jsonl`. These logs can hold file contents and command output, so debugging turns itself off after an hour (or `npm run hooks:debug off`). They stay on your computer.
 
 ## How it maps Claude Code to the town
 
@@ -51,7 +77,7 @@ Open `http://localhost:4917/?demo` (or the app without the service running) for 
 | New prompt while at the plaza | Walks back to the last building it worked at, or to the commands building if it has none |
 | Working | Types, antenna blinks, green glow. Bubble shows Claude's to-do step, command description, or a friendly phrase |
 | Failed tool call / tool not allowed | Shown in its recent history as "Failed: …" (naming the step from before any permission wait) or "Not allowed: …" |
-| Permission prompt / waiting for your reply | Faces you and waves, orange bubble and glow, "needs you" in the header, plus a notification (shown by the page; macOS fallback) and a sound (see below) |
+| Permission prompt / waiting for your reply | Faces you and waves, orange bubble and glow, "needs you" in the header, plus a notification (shown by the page; the system's as fallback) and a sound (see below) |
 | Subagent (Agent/Task) | A smaller helper robot in the parent's color, named like "Atlas·2", that works on its own (see below) |
 | Stop | Walks to the plaza and waits by the tree until the next prompt |
 | Session ends (or 30 min silence) | Walks back to the station and leaves |
@@ -111,14 +137,14 @@ Click a robot in the town or its card in the sidebar to open its details at the 
 When a robot starts waiting for you, you get a notification ("Atlas needs you", with what it wants, the project and the session title) and the Glass sound. You get at most one alert per robot every 15 seconds (helpers count separately).
 
 - **Notification:** the Agentville page shows it, using your browser's notification permission. Click **Allow notifications** in the header once (it appears until the browser has an answer). The page must stay open in a tab, but it can be in the background. Clicking the notification brings the page forward and highlights the robot.
-- **No page allowed to notify:** the service falls back to a macOS notification through AppleScript. macOS credits it to the app that started the service (Terminal, iTerm, Claude…) and silently drops it if that app can't send notifications, so the page is the reliable route.
-- **Sound:** played by the service on macOS, so it works with no page open.
+- **No page allowed to notify:** the service falls back to the system's notification. On macOS that's AppleScript: macOS credits it to the app that started the service (Terminal, iTerm, Claude…) and silently drops it if that app can't send notifications, so the page is the reliable route. On Windows it's a toast from PowerShell.
+- **Sound:** played by the service (macOS's Glass, Windows' notification sound), so it works with no page open.
 - Turn alerts off or on with the **Alerts** button in the header. The setting applies to every open page and lasts until the service restarts. To start with alerts off, run `AGENTVILLE_ALERTS=0 npm start`.
 - The Claude desktop app may also notify you about the same prompt. If you get two, turn one of them off.
 
 ## Privacy
 
-Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps robot state in memory. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. To group repos into worlds it reads, once at start, the first `cwd` line of the newest transcript in each `~/.claude/projects/` folder (nothing else from them). Written to disk: `~/.agentville/towns.json` (which town map each repo has), and the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
+Everything stays on your computer. The service only listens on `127.0.0.1` and keeps robot state in memory. Pages need a sign-in (a cookie from the dialog above, or the link), and the hooks send a token from `~/.agentville`, so other programs and other user accounts can't read your sessions. It refuses web pages from other sites (any browser `Origin` that isn't localhost), so a website you have open can't read your sessions or send fake events. To group repos into worlds it reads, once at start, the first `cwd` line of the newest transcript in each `~/.claude/projects/` folder (nothing else from them). Written to disk: `~/.agentville/towns.json` (which town map each repo has), and the event log above, which includes your prompts, file paths and commands. Turn it off if you'd rather not keep it.
 
 ## Code
 
@@ -134,7 +160,10 @@ Everything stays on your Mac. The service only listens on `127.0.0.1` and keeps 
 | `src/boardview.ts` | The world board: town vignettes, railway network, trains, planet ground |
 | `public/towns/<map>/` | Each town map: picture and `town.json` (buildings, doors, labels, roles, road paths) |
 | `public/worlds/valley/` | The painted world map and its `world.json` (town spots, stations, railway) |
-| `server/notify.ts` | Needs-you alerts: macOS notification + sound |
+| `server/notify.ts` | Needs-you alerts: the system's notification + sound |
+| `server/windows.ts` | Windows: bring a window forward (Go to session), the sound, a toast (PowerShell) |
+| `server/hook.mjs` | The hook on Windows (`node hook.mjs`, no shell) |
+| `server/open.ts` | Open a link in the default browser on each system |
 | `server/friendly.ts` | Friendly bubble text from tool calls |
 | `server/hooks.ts` | Install/uninstall the hooks in `~/.claude/settings.json` |
 | `server/simulate.ts` | Fake events for testing |

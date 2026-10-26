@@ -75,6 +75,11 @@ aside h2 { font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; co
 #signin[hidden] { display: none; }
 #signin b { color: #fff; display: block; }
 #signin code { background: #43260f; padding: 1px 5px; border-radius: 4px; }
+#signin .si-row { display: flex; align-items: center; gap: 10px; margin: 8px 0 6px; }
+#signin #si-go { background: #ea580c; border-color: #fb923c; color: #fff; font-weight: 600; white-space: nowrap; }
+#signin #si-go:disabled { opacity: .6; cursor: default; }
+#signin .si-code { display: inline; font-size: 15px; letter-spacing: 2px; color: #fff; }
+#signin .si-alt { font-size: 12px; color: #e6b894; }
 #stage .zoom { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: flex; flex-direction: column; gap: 4px; }
 #stage .zoom button { width: 30px; height: 30px; padding: 0; font-size: 16px; line-height: 1; background: rgba(27, 33, 64, .88); }
 /* town picker: a search box with an autocomplete list */

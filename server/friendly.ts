@@ -4,8 +4,11 @@
 const clip = (s: string, n = 42) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
 
 /** "LoginForm.tsx" -> "login form", "user_settings.py" -> "user settings" */
+/** The last part of a path (Windows paths too). */
+const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
 export function humanizeFile(path: string) {
-  const base = path.split('/').pop() ?? path;
+  const base = baseName(path);
   const stem = base.replace(/\.(test|spec|stories|d)\.[^.]+$/, '').replace(/\.[^.]+$/, '');
   const words = stem
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
@@ -16,7 +19,7 @@ export function humanizeFile(path: string) {
 }
 
 function fileKind(path: string): string | null {
-  const p = path.toLowerCase();
+  const p = path.toLowerCase().replace(/\\/g, '/');
   const base = p.split('/').pop() ?? p;
   if (/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|cargo\.toml|go\.mod|gemfile)$/.test(p)) return 'dependencies';
   if (/(\.test\.|\.spec\.|_test\.|(^|\/)tests?\/|__tests__)/.test(p)) return `the ${humanizeFile(path)} tests`;
@@ -54,7 +57,7 @@ function bashText(cmd: string): string {
 /** "the login form" for descriptive names, but "hello.js" when the name is a single short word */
 function fileRef(path: string) {
   const h = humanizeFile(path);
-  return h.includes(' ') ? `the ${h}` : (path.split('/').pop() ?? h);
+  return h.includes(' ') ? `the ${h}` : baseName(path);
 }
 
 /** Plan step currently in progress, from TodoWrite or a plan tool (Claude desktop's update_plan). */
@@ -163,7 +166,7 @@ export function waitingFor(t: ToolCall): { task: string; ask?: string } {
   const name = t.tool_name ?? '';
   const i = t.tool_input ?? {};
   const f = i.file_path ?? i.notebook_path;
-  const file = typeof f === 'string' ? f.split('/').slice(-2).join('/') : undefined;
+  const file = typeof f === 'string' ? f.split(/[\\/]/).slice(-2).join('/') : undefined;
   const long = (s: unknown) => (typeof s === 'string' && s.trim() ? clip(s.replace(/\s+/g, ' ').trim(), 200) : undefined);
   switch (name) {
     case 'AskUserQuestion': {

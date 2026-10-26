@@ -9,9 +9,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { exec } from 'node:child_process';
 import type http from 'node:http';
 import { fileURLToPath } from 'node:url';
+import { openUrl } from './open';
 
 export const HEADER = 'x-agentville-token';
 export const COOKIE = 'agentville_token';
@@ -92,5 +92,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const auth = new Auth(undefined, cmd === 'new');
   if (cmd === 'new') console.log('Made a new Agentville token. The hooks use it right away; open the link below once in your browser:');
   console.log(auth.link(port));
-  if (cmd === 'open' || cmd === 'new') exec(`open '${auth.link(port)}'`);
+  if (cmd === 'open' || cmd === 'new') openUrl(auth.link(port));
 }

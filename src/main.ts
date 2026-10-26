@@ -6,7 +6,7 @@ import { Demo, DEMO_TOWNS, demoFolders } from './demo';
 import { WorldMap, loadWorldArt } from './worldview';
 import { PlanetView } from './planet';
 import { WorldBoard } from './boardview';
-import { connectLive, serviceAvailable, signedIn } from './live';
+import { connectLive, serviceAvailable, signedIn, startSignIn, waitSignIn } from './live';
 import { TownPicker } from './picker';
 import { BADGE_LABEL } from './badges';
 import { Toasts } from './toasts';
@@ -45,10 +45,30 @@ async function main() {
 
   // Live mode when the local service is running and this browser has its token; demo mode otherwise (or with ?demo).
   const running = !new URLSearchParams(location.search).has('demo') && (await serviceAvailable());
-  const live = running && (await signedIn());
+  const signed = running ? await signedIn() : undefined;
+  const live = signed === true;
   /** The service runs but this browser isn't signed in: say how, over the (demo) town. */
   const signInNote = (show: boolean) => { $('#signin').hidden = !show; };
-  if (running && !live) signInNote(true);
+  if (running && signed === false) signInNote(true);
+  // one click: a system dialog asks you to allow this browser, showing the same code as here
+  $('#si-go').onclick = async () => {
+    const go = $<HTMLButtonElement>('#si-go'), status = $('#si-status');
+    go.disabled = true;
+    const r = await startSignIn();
+    if ('error' in r) {
+      status.innerHTML = r.error === 'busy' ? 'Another sign-in is waiting for an answer. Try again in a minute.'
+        : r.error === 'too-many' ? 'Too many tries. Wait a minute, then try again.'
+        : r.error === 'unsupported' ? 'This computer can\'t show the dialog: use the link below.'
+        : 'Couldn\'t reach Agentville. Is it still running?';
+      go.disabled = false;
+      return;
+    }
+    status.innerHTML = `A window asks you to allow this browser. Allow it only if it shows <b class="si-code">${r.code}</b>.`;
+    const answer = await waitSignIn(r.id, r.secret);
+    if (answer === 'allow') { status.textContent = 'Signed in. Loading your town…'; location.reload(); return; }
+    status.textContent = answer === 'deny' ? 'Not allowed (or no answer in time).' : 'That sign-in expired. Try again.';
+    go.disabled = false;
+  };
   let demo: Demo | null = null;
   /** Go to session: bring a robot's session (terminal, editor, Claude app) to the front; live mode only */
   let goToSession: ((id: string) => void) | null = null;
@@ -305,6 +325,16 @@ async function main() {
     else { mapWorld = t.name; setView('world'); }
   });
 
+  /**
+   * Disconnected: is it the token (renewed, or the cookie cleared: reconnecting won't help until you sign in
+   * again) or just the service restarting? Only a clear "no" from a running service, while still
+   * disconnected, shows the sign-in note: a restart answers "can't ask" or "yes".
+   */
+  let connected = false;
+  const checkSignIn = async () => {
+    const yes = await signedIn();
+    if (yes === false && !connected && (await serviceAvailable()) && !connected) signInNote(true);
+  };
   if (live) {
     $('#mode').textContent = 'Connecting…';
     $('#t-add').style.display = 'none';
@@ -345,9 +375,9 @@ async function main() {
       settings: (s) => applySettings(s),
       maps: (m) => { mapChoices = m; settingsPanel?.refresh(); },
       status: (ok) => {
+        connected = ok;
         $('#mode').textContent = ok ? 'Live' : 'Reconnecting…'; $('#mode').className = 'mode ' + (ok ? 'live' : 'off');
-        // the token was renewed (or the cookie cleared): reconnecting won't help until you sign in again
-        if (ok) signInNote(false); else signedIn().then((yes) => serviceAvailable().then((up) => signInNote(up && !yes)));
+        if (ok) signInNote(false); else checkSignIn();
       },
     });
     goToSession = (id) => conn.focus(id);
@@ -518,12 +548,15 @@ async function main() {
       { target: '#agents', title: 'Who\'s here', text: 'The robots in this town. Click one (or the robot itself) for its details: what it\'s doing, its to-do list, how full its context is, and your last exchange. Click its name there to rename it.' },
       { target: '#needs-wrap', title: 'When a robot needs you', text: 'A robot waiting for a permission or your answer turns orange and this counter lights up. Click it for the list across every world, with exactly what each one wants.' },
       { target: '#crumbs', title: 'Towns, worlds and the planet', text: 'A world is a project: the repos you work on together. Go up to see a world\'s towns, then the planet with every world (or press M). Esc comes back down.' },
-      { target: '#town-pick', title: 'Find anything', text: 'Search towns here (press /), or press ⌘K to jump to any robot, town or world.' },
+      { target: '#town-pick', title: 'Find anything', text: `Search towns here (press /), or press ${/Mac|iP(hone|ad)/.test(navigator.platform) ? '⌘K' : 'Ctrl+K'} to jump to any robot, town or world.` },
       { target: '#t-time', title: 'Day and night', text: 'Each town has a day and a night look. This follows your Mac\'s light or dark mode, or pick one.' },
       { target: '#t-settings', title: 'Settings', text: 'Notifications and toasts, labels, a clock, robot lines, each town\'s look and building names, and which world each town belongs to. You can take this tour again from here.' },
     ]);
   };
-  if (!localStorage.getItem('agentville.toured') && !new URLSearchParams(location.search).has('notour')) setTimeout(startTour, 1200);
+  // not while the sign-in note is up (the tour would cover its button): it starts once this browser is signed in
+  if (!localStorage.getItem('agentville.toured') && !new URLSearchParams(location.search).has('notour')) {
+    setTimeout(() => { if ($('#signin').hidden) startTour(); }, 1200);
+  }
   applySettings(settings);
 }
 

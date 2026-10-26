@@ -148,13 +148,14 @@ export class Worlds {
     return path.relative(dev, r).split(path.sep)[0] || path.basename(r) || r;
   }
 
-  /** The top-level folder a repo is in: under home (~/Dev), else under / (/srv). */
+  /** The top-level folder a repo is in: under home (~/Dev), else under the root of its drive (/srv, D:\work). */
   private group(p: string): string {
     if (within(p, this.home)) {
       const rel = path.relative(this.home, p);
       return rel ? path.join(this.home, rel.split(path.sep)[0]) : this.home;
     }
-    return path.sep + (p.split(path.sep).find(Boolean) ?? '');
+    const { root } = path.parse(p);
+    return path.join(root, p.slice(root.length).split(path.sep).find(Boolean) ?? '');
   }
 
   /**
@@ -174,7 +175,7 @@ export class Worlds {
     const moving = new Set(roots.map((r) => real(r)));
     for (const [w, list] of Object.entries(worlds)) {
       if (!Array.isArray(list)) continue;
-      worlds[w] = list.filter((s) => typeof s !== 'string' || s.endsWith('/**') || !moving.has(this.expand(s) ?? ''));
+      worlds[w] = list.filter((s) => typeof s !== 'string' || s.endsWith('/**') || s.endsWith('\\**') || !moving.has(this.expand(s) ?? ''));
       if (!worlds[w].length) delete worlds[w];
     }
     const short = (r: string) => (within(r, this.home) && r !== this.home ? '~/' + path.relative(this.home, r) : r);
@@ -225,7 +226,7 @@ export class Worlds {
         if (!name.trim() || !Array.isArray(list)) { bad.push(`world "${name}" should be a name with a list of paths`); continue; }
         const pats: Pattern[] = [];
         for (const s of list) {
-          const deep = typeof s === 'string' && (s === '/**' || s.endsWith('/**'));
+          const deep = typeof s === 'string' && (s === '/**' || s.endsWith('/**') || s.endsWith('\\**'));
           const dir = typeof s === 'string' ? this.expand(deep ? s.slice(0, -3) || '/' : s) : undefined;
           if (dir) pats.push({ dir, deep });
           else bad.push(`world "${name}": ${JSON.stringify(s)} should be an absolute or ~/ path`);

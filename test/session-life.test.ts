@@ -13,6 +13,8 @@ test('the last prompt and how Claude answered, as plain text', () => {
   const done = t.send(r, { hook_event_name: 'Stop', last_assistant_message: '## Done\n\nFixed it:\n\n```ts\nx()\n```\n\nSee [the test](a.ts).' });
   assert.equal(done.lastReply, 'Done Fixed it: [code] See the test.');
   assert.equal(t.send(r, { hook_event_name: 'UserPromptSubmit', prompt: 'Thanks, now push' }).lastReply, undefined, 'a new prompt: the old reply goes');
+  const kept = t.send(r, { hook_event_name: 'UserPromptSubmit', prompt: '<agent-message from="x">\n[Subagent hand-back] done</agent-message>' });
+  assert.equal(kept.lastPrompt, 'Thanks, now push', 'a helper\'s report is not your prompt');
 });
 
 test('a robot you rename keeps its name, and so do its helpers', () => {

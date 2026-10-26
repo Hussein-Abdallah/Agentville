@@ -31,7 +31,8 @@
       <button id="wm-style" hidden title="Switch between the board (any number of towns) and the painted valley (three towns)">Painted map</button>
       <div id="planetview" hidden></div>
       <div id="signin" hidden><b>Agentville is running, but this browser isn't signed in yet.</b>
-        Run <code>npm run token -- open</code>, or open the sign-in link the service printed in its terminal. Until then you see the demo.</div>
+        <div class="si-row"><button id="si-go">Sign in this browser</button><span id="si-status">A window will ask you to allow it. Until then you see the demo.</span></div>
+        <div class="si-alt">Or run <code>npm run token -- link</code> and open the link it prints in this window. Each browser, and each Chrome profile, signs in once.</div></div>
       <div class="zoom">
         <button id="z-in" title="Zoom in (+)">+</button>
         <button id="z-out" title="Zoom out (−)">−</button>

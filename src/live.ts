@@ -85,14 +85,30 @@ export function connectLive(url: string, h: LiveHandlers) {
   };
 }
 
-/** Does this browser have Agentville's token (the cookie the sign-in link sets)? */
-export async function signedIn(): Promise<boolean> {
+/** Does this browser have Agentville's token (the cookie the sign-in link sets)? undefined when the service couldn't be asked (restarting). */
+export async function signedIn(): Promise<boolean | undefined> {
   try {
     const r = await fetch('/auth', { cache: 'no-store' });
     return r.ok;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** One-click sign-in: ask the service (it shows you a dialog); the code to compare, or why not (busy, too-many, unsupported). */
+export async function startSignIn(): Promise<{ id: string; code: string; secret: string } | { error: string }> {
+  try {
+    const r = await fetch('/signin', { method: 'POST' });
+    return (await r.json().catch(() => ({ error: `status ${r.status}` }))) as any;
+  } catch { return { error: 'offline' }; }
+}
+
+/** Waits for your answer in the dialog: allowed (the browser now has the cookie), not allowed, or gone. */
+export async function waitSignIn(id: string, secret: string): Promise<'allow' | 'deny' | 'gone'> {
+  try {
+    const r = await fetch('/signin/wait', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, secret }) });
+    return r.status === 204 ? 'allow' : r.status === 410 ? 'gone' : 'deny';
+  } catch { return 'gone'; }
 }
 
 /** Is the service reachable? (it serves /health) */

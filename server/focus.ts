@@ -1,15 +1,18 @@
-// Go to the session: bring the app a session runs in to the front (macOS only). The hooks report
+// Go to the session: bring the app a session runs in to the front. On macOS the hooks report
 // the app's bundle id (__CFBundleIdentifier, inherited from the app that started Claude Code) and,
 // on SessionStart / UserPromptSubmit, Claude Code's terminal (tty), so Terminal and iTerm can also
 // select the right tab; editors open the session's folder, which brings that window forward.
 // Every value is checked against a strict pattern and passed as an argument, never through a shell.
 // For VS Code-style editors, the folder or .code-workspace file comes from the editor's own list of
 // open windows, so we only ever bring an existing window forward (opening anything else makes a new one).
+// On Windows the hooks report the terminal program, Claude Code's entry point and Windows Terminal, and a
+// PowerShell helper brings forward that app's window whose title has the session's folder (see windows.ts).
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { FOCUS_SCRIPT, WIN_PROCESSES, defaultPs, type PsRun } from './windows';
 
 export interface Host {
   /** bundle id, e.g. com.apple.Terminal */
@@ -18,18 +21,25 @@ export interface Host {
   term?: string;
   /** Claude Code's terminal device, e.g. ttys003 */
   tty?: string;
+  /** Claude Code's entry point (CLAUDE_CODE_ENTRYPOINT): claude-desktop, claude-vscode, cli… */
+  entry?: string;
+  /** it runs in Windows Terminal */
+  wt?: boolean;
 }
 
 const BUNDLE = /^[A-Za-z0-9][A-Za-z0-9.-]{1,120}$/;
 const TERM = /^[A-Za-z0-9._ -]{1,40}$/;
 const TTY = /^ttys?\d{1,4}$/;
+const ENTRY = /^[a-z0-9-]{1,40}$/;
 
 /** Host details from the hook's headers, keeping only well-formed values. */
-export function hostFrom(bundle: unknown, term: unknown, tty: unknown): Host {
+export function hostFrom(bundle: unknown, term: unknown, tty: unknown, entry?: unknown, wt?: unknown): Host {
   const h: Host = {};
   if (typeof bundle === 'string' && BUNDLE.test(bundle.trim())) h.bundle = bundle.trim();
   if (typeof term === 'string' && TERM.test(term.trim())) h.term = term.trim();
   if (typeof tty === 'string' && TTY.test(tty.trim())) h.tty = tty.trim();
+  if (typeof entry === 'string' && ENTRY.test(entry.trim())) h.entry = entry.trim();
+  if (wt === '1') h.wt = true;
   return h;
 }
 
@@ -67,7 +77,13 @@ export const bundleOf = (h: Host) => h.bundle ?? (h.term ? TERMS[h.term] : undef
 /** A short name for the app, for the "Open in …" button. */
 export function appName(h: Host): string | undefined {
   const b = bundleOf(h);
-  if (!b) return;
+  if (!b) {
+    // no bundle id (Windows, Linux): Claude Code's entry point, else Windows Terminal
+    if (h.entry === 'claude-desktop') return 'Claude';
+    if (h.entry === 'claude-vscode') return 'VS Code';
+    if (h.wt) return 'Windows Terminal';
+    return;
+  }
   if (KNOWN[b]) return KNOWN[b];
   if (b.startsWith(JETBRAINS)) return 'JetBrains';
   const last = b.split('.').pop()!;
@@ -84,8 +100,9 @@ const defaultRun: Run = (cmd, args) => new Promise((done) => execFile(cmd, args,
  * editors open the folder, other apps are activated. Resolves to whether it worked.
  */
 export async function focusHost(h: Host, folder: string | undefined, run: Run = defaultRun,
-  appSupport = path.join(os.homedir(), 'Library', 'Application Support')): Promise<boolean> {
-  if (process.platform !== 'darwin') return false;
+  appSupport = appDataDir(), platform: NodeJS.Platform = process.platform, ps: PsRun = defaultPs): Promise<boolean> {
+  if (platform === 'win32') return focusWindows(h, folder, appSupport, ps);
+  if (platform !== 'darwin') return false;
   const b = bundleOf(h);
   if (!b || !BUNDLE.test(b)) return false;
   const tty = h.tty && TTY.test(h.tty) ? `/dev/${h.tty}` : undefined;
@@ -94,6 +111,28 @@ export async function focusHost(h: Host, folder: string | undefined, run: Run = 
   const dir = folder && path.isAbsolute(folder) && isDir(folder) ? folder : undefined;
   const open = dir && EDITORS[b] ? editorWindow(path.join(appSupport, EDITORS[b]), dir) : undefined;
   return run('open', open ? ['-b', b, open] : ['-b', b]);
+}
+
+/** Where VS Code-style editors keep their settings: ~/Library/Application Support on macOS, %APPDATA% on Windows. */
+export function appDataDir(platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') return process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming');
+  if (platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support');
+  return process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config');
+}
+
+/**
+ * Windows: the app's window whose title holds the session's folder name (an editor shows the folder of
+ * its window, e.g. "app.ts - agentville - Visual Studio Code"), else any of its windows.
+ */
+async function focusWindows(h: Host, folder: string | undefined, appSupport: string, ps: PsRun): Promise<boolean> {
+  const name = appName(h);
+  const procs = name ? WIN_PROCESSES[name] : undefined;
+  if (!procs) return false;
+  const b = bundleOf(h);
+  const dir = folder && path.isAbsolute(folder) && isDir(folder) ? folder : undefined;
+  const window = dir && b && EDITORS[b] ? editorWindow(path.join(appSupport, EDITORS[b]), dir) : undefined;
+  const title = (window ?? dir) ? path.basename(window ?? dir!).replace(/\.code-workspace$/i, '') : '';
+  return ps(FOCUS_SCRIPT, { AV_PROCS: procs.join(','), AV_TITLE: title.replace(/[*?\[\]`]/g, '') });
 }
 
 /**

@@ -1,5 +1,7 @@
 // Agentville local service: receives Claude Code hook events and streams robot states to the town.
 //   POST /events   <- hook JSON (from the curl hook)
+//   GET  /status   -> what `npm run hooks:status` shows: the last event, sessions, debugging (needs the token)
+//   POST /signin, /signin/wait -> one-click sign-in for a new browser (a system dialog asks you; pages only)
 //   GET  /ws       -> WebSocket: {type:'snapshot'|'agent'|'remove'|'log'|'towns'|'alerts'|'needs'|'focused'|'settings'};
 //                     the page sends {type:'alerts', on}, {type:'notify', can}, {type:'focus', id} (Go to session), {type:'rename', id, name},
 //                     and from Settings {type:'settings', settings}, {type:'townMap', id, map}, {type:'buildingName', id, building, name}, {type:'world', ids, world}
@@ -7,7 +9,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { Sessions, type HookEvent } from './state';
@@ -18,6 +19,9 @@ import { Auth } from './auth';
 import { MAX_EVENT_BYTES, RateLimit, warnOnce } from './limits';
 import { SettingsFile } from './settings';
 import type { Settings } from '../src/settings';
+import { HookDebug } from './debug';
+import { openUrl } from './open';
+import { SignIn, browserName, systemAsk } from './signin';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -34,6 +38,11 @@ const settings = new SettingsFile();
 const alerts = new Alerts(settings.value.alerts && process.env.AGENTVILLE_ALERTS !== '0');
 alerts.sound = settings.value.sound;
 const MAX_CLIENTS = 20; // open pages
+const hookDebug = new HookDebug(path.join(APP, 'logs'));
+const signIn = new SignIn(systemAsk());
+const startedAt = Date.now();
+let eventCount = 0;
+let lastEvent: { name: string; at: number; session: string } | undefined;
 
 const robot = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'sprites', 'robot', 'robot.json'), 'utf8'));
 // every town map in public/towns (Frostpeak first: repos get maps in this order of preference)
@@ -58,7 +67,7 @@ const sessions: Sessions = new Sessions(maps, Object.keys(robot.colors), (msg) =
       const s = JSON.stringify(msg); // every allowed page gets it; the browser merges them (same tag)
       for (const c of notifiers) if (c.readyState === WebSocket.OPEN) c.send(s);
     }
-    if (via) console.log(`${msg.state.name} needs you: notification ${via === 'page' ? `shown by ${notifiers.size} open page${notifiers.size === 1 ? '' : 's'}` : 'sent to macOS (no page allowed to notify)'}`);
+    if (via) console.log(`${msg.state.name} needs you: notification ${via === 'page' ? `shown by ${notifiers.size} open page${notifiers.size === 1 ? '' : 's'}` : `sent to ${process.platform === 'win32' ? 'Windows' : 'macOS'} (no page allowed to notify)`}`);
     return;
   }
   if (msg.type === 'remove') alerts.forget(msg.id);
@@ -148,16 +157,56 @@ const server = http.createServer((req, res) => {
         e.agentville_app = header(req, 'x-agentville-app');
         e.agentville_term = header(req, 'x-agentville-term');
         e.agentville_tty = header(req, 'x-agentville-tty');
+        e.agentville_entry = header(req, 'x-agentville-entry');
+        e.agentville_wt = header(req, 'x-agentville-wt');
         if (DEBUG) console.log(e.hook_event_name, e.tool_name ?? '', e.session_id?.slice(0, 8));
+        eventCount++;
+        lastEvent = { name: String(e.hook_event_name ?? '?'), at: Date.now(), session: String(e.session_id ?? '').slice(0, 8) };
         const result = sessions.handle(e);
+        if (hookDebug.on) hookDebug.write(e, result);
         log.write({ ...summarizeEvent(e), result: result && 'recent' in result ? { ...result, recent: undefined } : result }); // history would repeat on every line
       } catch { /* ignore malformed events */ }
     });
     return;
   }
   if (route === '/health') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"ok":true}'); }
+  // for `npm run hooks:status`: is it getting events? (with the token: it tells which sessions are active)
+  if (route === '/status') {
+    if (!localOrigin(req) || !auth.allows(req)) { res.writeHead(401).end(); return; }
+    const snap = sessions.snapshot();
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ startedAt, events: eventCount, lastEvent, sessions: snap.filter((a) => !a.parentId).length, helpers: snap.filter((a) => a.parentId).length,
+      pages: clients.size, debugUntil: hookDebug.endsAt ?? null, pid: process.pid }));
+  }
   // the page asks whether it's signed in (has the token cookie)
   if (route === '/auth') { res.writeHead(localOrigin(req) && auth.allows(req) ? 204 : 401).end(); return; }
+  // one-click sign-in (pages only: a browser always sends a local Origin; curl and the hooks send none)
+  if (req.method === 'POST' && (route === '/signin' || route === '/signin/wait')) {
+    if (!localOrigin(req) || !req.headers.origin) { res.writeHead(403).end(); req.resume(); return; }
+    const json = (code: number, body?: object, headers: Record<string, string> = {}) => {
+      res.writeHead(code, body ? { 'content-type': 'application/json', ...headers } : headers).end(body ? JSON.stringify(body) : undefined);
+    };
+    if (route === '/signin') {
+      req.resume();
+      const browser = browserName(req.headers['user-agent']);
+      const r = signIn.start(browser);
+      if ('error' in r) return json(r.error === 'busy' ? 409 : r.error === 'too-many' ? 429 : 501, { error: r.error });
+      console.log(`A browser asks to sign in (${browser}): a dialog asks you to allow it.`);
+      return json(200, r);
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => { size += c.length; if (size <= 4096) chunks.push(c); });
+    req.on('end', async () => {
+      let b: any;
+      try { b = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return json(400); }
+      const answer = await signIn.wait(b?.id, b?.secret);
+      if (answer === 'allow') { console.log('Signed in a browser.'); return json(204, undefined, { 'set-cookie': auth.cookie() }); }
+      if (answer === 'deny') console.log('A browser\'s sign-in was not allowed.');
+      json(answer === 'gone' ? 410 : 403);
+    });
+    return;
+  }
   // the sign-in link: keep the token in a cookie, then drop it from the address
   if (req.method === 'GET' && route === '/' && /[?&]token=/.test(req.url ?? '')) {
     if (localOrigin(req) && auth.allows(req)) { res.writeHead(302, { 'set-cookie': auth.cookie(), location: '/' }).end(); return; }
@@ -230,9 +279,9 @@ server.listen(PORT, HOST, () => {
   const url = auth.link(PORT);
   console.log(`Agentville is running at http://localhost:${PORT}`);
   console.log(`Sign in a browser once with: ${url}  (or run: npm run token -- open)`);
-  if (process.platform === 'darwin') console.log(`Needs-you alerts ${alerts.on ? 'on' : 'off'} (switch with the Alerts button; start with AGENTVILLE_ALERTS=0 to begin off)`);
+  if (process.platform === 'darwin' || process.platform === 'win32') console.log(`Needs-you alerts ${alerts.on ? 'on' : 'off'} (switch with the Alerts button; start with AGENTVILLE_ALERTS=0 to begin off)`);
   console.log('Waiting for Claude Code events… (install the hooks once with: npm run hooks:install)');
   if (log.enabled) console.log(`Logging events to ${log.dir} (turn off with AGENTVILLE_LOG=0)`);
   log.write({ event: 'ServiceStart', version: 2, port: PORT, maps: mapIds });
-  if (process.argv.includes('--open')) exec(`${process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'} '${url}'`);
+  if (process.argv.includes('--open')) openUrl(url);
 });
